@@ -1,7 +1,8 @@
-@group(0) @binding(0) var<storage, read_write> positionStorage: array<vec3<f32>>;
-@group(0) @binding(1) var<storage, read_write> velocityStorage: array<vec3<f32>>;
+@group(0) @binding(0) var<storage, read_write> positionStorage: array<vec3f>;
+@group(0) @binding(1) var<storage, read_write> velocityStorage: array<vec3f>;
 @group(0) @binding(2) var<storage, read_write> phaseStorage: array<f32>;
 
+//split-here
 fn computePosition(index: u32, deltaTime: f32) {
     // Update position
     let newPosition = positionStorage[index] + velocityStorage[index] * deltaTime * 15.0;

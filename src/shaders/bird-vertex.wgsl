@@ -1,15 +1,16 @@
-@group(0) @binding(0) var<storage, read> positionStorage: array<vec3<f32>>;
-@group(0) @binding(1) var<storage, read> velocityStorage: array<vec3<f32>>;
+@group(0) @binding(0) var<storage, read> positionStorage: array<vec3f>;
+@group(0) @binding(1) var<storage, read> velocityStorage: array<vec3f>;
 @group(0) @binding(2) var<storage, read> phaseStorage: array<f32>;
 
+//split-here
 fn birdVertex(
-    position: vec3<f32>,
+    position: vec3f,
     reference: u32,
     birdVertex: u32,
     modelWorldMatrix: mat4x4<f32>,
     cameraProjectionMatrix: mat4x4<f32>,
     cameraViewMatrix: mat4x4<f32>
-) -> vec4<f32> {
+) -> vec4f {
     var localPosition = position;
     let newPhase = phaseStorage[reference];
     let newVelocity = normalize(velocityStorage[reference]);

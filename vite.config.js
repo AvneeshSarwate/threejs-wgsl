@@ -13,6 +13,7 @@ export default defineConfig({
     }
   },
   build: {
+    sourcemap: true,
     rollupOptions: {
       external: ['agent_examples/**']
     }
@@ -20,5 +21,12 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['agent_examples'],
     entries: ['src/**/*.ts', 'src/**/*.js', 'index.html']
+  },
+  define: {
+    __DEV__: true
+  },
+  esbuild: {
+    sourcemap: true,
+    keepNames: true
   }
 });

@@ -1,14 +1,15 @@
-@group(0) @binding(0) var<storage, read_write> positionStorage: array<vec3<f32>>;
-@group(0) @binding(1) var<storage, read_write> velocityStorage: array<vec3<f32>>;
+@group(0) @binding(0) var<storage, read_write> positionStorage: array<vec3f>;
+@group(0) @binding(1) var<storage, read_write> velocityStorage: array<vec3f>;
 
+//split-here
 fn computeVelocity(
     index: u32,
     separation: f32,
     alignment: f32,
     cohesion: f32,
     deltaTime: f32,
-    rayOrigin: vec3<f32>,
-    rayDirection: vec3<f32>,
+    rayOrigin: vec3f,
+    rayDirection: vec3f,
     numBirds: u32
 ) {
     // Define consts
@@ -49,7 +50,7 @@ fn computeVelocity(
     velocity -= normalize(dirToCenter) * deltaTime * 5.0;
     
     // Loop through all other birds
-    for (var i: u32 = 0u; i < numBirds; i = i + 1u) {
+    for (var i = 0u; i < numBirds; i++) {
         if (i == index) {
             continue;
         }
@@ -66,7 +67,7 @@ fn computeVelocity(
         let distToBirdSq = distToBird * distToBird;
         
         // Don't apply changes if bird is outside zone radius
-        if (distToBirdSq > zoneRadiusSq) {
+        if (distToBirdSq /*cmp*/ > zoneRadiusSq) {
             continue;
         }
         
@@ -102,7 +103,7 @@ fn computeVelocity(
         }
     }
     
-    if (length(velocity) > velocityLimit) {
+    if (length(velocity) /*cmp*/ > velocityLimit) {
         velocity = normalize(velocity) * velocityLimit;
     }
     
