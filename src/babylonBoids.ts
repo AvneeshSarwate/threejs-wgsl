@@ -9,6 +9,11 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
     // Initialize WebGPU engine
     const engine = new BABYLON.WebGPUEngine(canvas);
     await engine.initAsync();
+    
+    // Set canvas size to 1280x720
+    canvas.width = 1280;
+    canvas.height = 720;
+    engine.resize();
 
     if (!engine.getCaps().supportComputeShaders) {
         throw new Error("Compute shaders are not supported");
@@ -17,17 +22,25 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
     const scene = new BABYLON.Scene(engine);
     scene.clearColor = new BABYLON.Color4(0.05, 0.05, 0.1, 1);
 
-    // Camera
-    const camera = new BABYLON.ArcRotateCamera(
+    // Orthographic camera for 2D view
+    const camera = new BABYLON.FreeCamera(
         "camera",
-        -Math.PI / 2,
-        Math.PI / 2,
-        10,
-        BABYLON.Vector3.Zero(),
+        new BABYLON.Vector3(0, 0, -10),
         scene
     );
     camera.setTarget(BABYLON.Vector3.Zero());
-    camera.attachControl(canvas, true);
+    camera.mode = BABYLON.Camera.ORTHOGRAPHIC_CAMERA;
+    
+    // Set orthographic bounds to match 1280x720 world space
+    const width = 1280;
+    const height = 720;
+    camera.orthoLeft = -width / 2;
+    camera.orthoRight = width / 2;
+    camera.orthoBottom = -height / 2;
+    camera.orthoTop = height / 2;
+    
+    // Disable camera controls
+    camera.inputs.clear();
 
     // Configuration
     const numParticles = 1500;
@@ -37,10 +50,10 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
 
     // Simulation parameters
     const simParams = {
-        deltaT: 0.04,
-        rule1Distance: 0.1,
-        rule2Distance: 0.025,
-        rule3Distance: 0.025,
+        deltaT: 0.5,
+        rule1Distance: 80.0,
+        rule2Distance: 30.0,
+        rule3Distance: 40.0,
         rule1Scale: 0.02,
         rule2Scale: 0.05,
         rule3Scale: 0.005,
@@ -58,7 +71,7 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
         scene.render();
     });
 
-    // Handle resize
+    // Handle resize - maintain 1280x720 aspect ratio
     window.addEventListener("resize", () => {
         engine.resize();
     });
@@ -110,13 +123,13 @@ class Boid {
         this.simParams.addUniform("rule3Scale", 1);
         this.simParams.addUniform("numParticles", 1);
 
-        // Initialize particle data
+        // Initialize particle data in 1280x720 world space
         const initialParticleData = new Float32Array(numParticles * 4);
         for (let i = 0; i < numParticles; ++i) {
-            initialParticleData[4 * i + 0] = 2 * (Math.random() - 0.5);
-            initialParticleData[4 * i + 1] = 2 * (Math.random() - 0.5);
-            initialParticleData[4 * i + 2] = 2 * (Math.random() - 0.5) * 0.1;
-            initialParticleData[4 * i + 3] = 2 * (Math.random() - 0.5) * 0.1;
+            initialParticleData[4 * i + 0] = (Math.random() - 0.5) * 1280; // x position
+            initialParticleData[4 * i + 1] = (Math.random() - 0.5) * 720;  // y position
+            initialParticleData[4 * i + 2] = (Math.random() - 0.5) * 20;   // x velocity (slower)
+            initialParticleData[4 * i + 3] = (Math.random() - 0.5) * 20;   // y velocity (slower)
         }
 
         // Create double-buffered storage buffers for ping-pong
@@ -214,8 +227,8 @@ const boidVertexShader = `
             position.y * sin(angle) + position.x * cos(angle)
         );
         
-        // Scale and translate
-        vec2 worldPos = rotatedPos * 0.1 + a_particlePos;
+        // Scale and translate (particle size in world space)
+        vec2 worldPos = rotatedPos * 25.0 + a_particlePos;
         
         gl_Position = worldViewProjection * vec4(worldPos, 0.0, 1.0);
     }
@@ -301,21 +314,21 @@ fn main(@builtin(global_invocation_id) GlobalInvocationID : vec3<u32>) {
       (cVel * params.rule3Scale);
 
   // clamp velocity for a more pleasing simulation
-  vVel = normalize(vVel) * clamp(length(vVel), 0.0, 0.1);
+  vVel = normalize(vVel) * clamp(length(vVel), 0.0, 100.0);
   // kinematic update
   vPos = vPos + (vVel * params.deltaT);
-  // Wrap around boundary
-  if (vPos.x < -1.0) {
-    vPos.x = 1.0;
+  // Wrap around boundary (1280x720 world space)
+  if (vPos.x < -640.0) {
+    vPos.x = 640.0;
   }
-  if (vPos.x > 1.0) {
-    vPos.x = -1.0;
+  if (vPos.x > 640.0) {
+    vPos.x = -640.0;
   }
-  if (vPos.y < -1.0) {
-    vPos.y = 1.0;
+  if (vPos.y < -360.0) {
+    vPos.y = 360.0;
   }
-  if (vPos.y > 1.0) {
-    vPos.y = -1.0;
+  if (vPos.y > 360.0) {
+    vPos.y = -360.0;
   }
   // Write back
   particlesB.particles[index].pos = vPos;
@@ -327,8 +340,8 @@ export async function babylonBoidsInit() {
     // Create canvas element
     const app = document.querySelector<HTMLDivElement>('#app')!;
     app.innerHTML = `
-        <canvas id="renderCanvas" width="1280" height="720"></canvas>
-        <div id="info">
+        <canvas id="renderCanvas" style="width: 1280px; height: 720px; display: block; position: fixed; top: 0; left: 0; margin: 0; padding: 0;"></canvas>
+        <div id="info" style="position: absolute; top: 10px; left: 10px; color: white; font-family: monospace; z-index: 100;">
             <strong>Babylon.js 8 - WebGPU Boids Simulation</strong><br>
             Efficient GPU-to-GPU Flocking with Circle Geometry
         </div>
