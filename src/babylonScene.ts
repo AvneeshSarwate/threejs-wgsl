@@ -46,7 +46,8 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
         engine,
         instanceCount * 4 * 4,
         BABYLON.Constants.BUFFER_CREATIONFLAG_VERTEX | 
-        BABYLON.Constants.BUFFER_CREATIONFLAG_STORAGE
+        BABYLON.Constants.BUFFER_CREATIONFLAG_STORAGE |
+        BABYLON.Constants.BUFFER_CREATIONFLAG_READ
     );
 
     // Create uniform buffer for compute shader parameters
@@ -65,7 +66,7 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
     const computeShader = new BABYLON.ComputeShader(
         "oscillate",
         engine,
-        { computeSource: "oscillateCompute" },
+        { computeSource: computeShaderSource },
         {
             bindingsMapping: {
                 "positions": { group: 0, binding: 0 },
@@ -199,7 +200,7 @@ export async function babylonInit() {
     // Create canvas element
   const app = document.querySelector<HTMLDivElement>('#app')!;
   app.innerHTML = `
-    <canvas id="renderCanvas"></canvas>
+    <canvas id="renderCanvas" width="1280" height="720"></canvas>
     <div id="info">
       <strong>Babylon.js 8 - WebGPU Compute Shader</strong><br>
       Oscillating Circles with Instanced Rendering
