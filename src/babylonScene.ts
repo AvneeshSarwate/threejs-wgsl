@@ -1,9 +1,10 @@
 import * as BABYLON from 'babylonjs';
 import computeShaderSource from './shaders/babylonOscilateCompute.wgsl?raw';
+import matrixOrientationTestShaderSource from './shaders/matrixTestShader.wgsl?raw';
 // import 'babylonjs/Engines/webgpuEngine';
 // import 'babylonjs/Compute/computeShader';
 
-export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promise<void> {
+export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promise<BABYLON.WebGPUEngine> {
     // Check for WebGPU support
     if (!navigator.gpu) {
         throw new Error("WebGPU is not supported in this browser");
@@ -41,10 +42,10 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
     const instanceCount = 2500;
     const gridSize = Math.ceil(Math.sqrt(instanceCount));
 
-    // Create storage buffer for positions
-    const positionBuffer = new BABYLON.StorageBuffer(
+    // Create storage buffer for matrices
+    const matrixBuffer = new BABYLON.StorageBuffer(
         engine,
-        instanceCount * 4 * 4,
+        instanceCount * 16 * 4,
         BABYLON.Constants.BUFFER_CREATIONFLAG_VERTEX | 
         BABYLON.Constants.BUFFER_CREATIONFLAG_STORAGE |
         BABYLON.Constants.BUFFER_CREATIONFLAG_READ
@@ -69,14 +70,14 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
         { computeSource: computeShaderSource },
         {
             bindingsMapping: {
-                "positions": { group: 0, binding: 0 },
+                "matrices": { group: 0, binding: 0 },
                 "params": { group: 0, binding: 1 }
             }
         }
     );
 
     // Set compute shader bindings
-    computeShader.setStorageBuffer("positions", positionBuffer);
+    computeShader.setStorageBuffer("matrices", matrixBuffer);
     computeShader.setUniformBuffer("params", paramsBuffer);
 
     // Create base mesh for instancing
@@ -113,8 +114,7 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
     }
     circle.thinInstanceSetBuffer("color", colors, 4);
 
-    // Matrices for thin instances
-    const matrices = new Float32Array(instanceCount * 16);
+
 
     // Wait for compute shader to be ready
     while (!computeShader.isReady()) {
@@ -133,28 +133,9 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
         const workgroupCount = Math.ceil(instanceCount / 64);
         computeShader.dispatch(workgroupCount, 1, 1);
 
-        // Read positions and update transformation matrices
-        positionBuffer.read().then((data) => {
-            const positions = new Float32Array(data.buffer);
-
-            for (let i = 0; i < instanceCount; i++) {
-                const x = positions[i * 4];
-                const y = positions[i * 4 + 1];
-                const z = positions[i * 4 + 2];
-
-                // Create transformation matrix with some rotation
-                const rotationY = time * 0.5 + i * 0.1;
-                const scale = 1.0 + Math.sin(time * 2.0 + i * 0.05) * 0.2;
-
-                const matrix = BABYLON.Matrix.Compose(
-                    new BABYLON.Vector3(scale, scale, scale),
-                    BABYLON.Quaternion.FromEulerAngles(0, rotationY, 0),
-                    new BABYLON.Vector3(x, y, z)
-                );
-
-                matrix.copyToArray(matrices, i * 16);
-            }
-
+        // Read matrices directly from compute shader
+        matrixBuffer.read().then((data) => {
+            const matrices = new Float32Array(data.buffer);
             circle.thinInstanceSetBuffer("matrix", matrices, 16);
         });
     });
@@ -168,6 +149,8 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
     window.addEventListener("resize", () => {
         engine.resize();
     });
+    
+    return engine;
 }
 
 // Helper function for HSL to RGB conversion
@@ -196,6 +179,132 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
     return [r, g, b];
 }
 
+async function matrixOrientationTest(engine: BABYLON.WebGPUEngine) {
+    console.log("=== Matrix Orientation Test ===");
+    
+    const testCount = 4;
+    
+    // Create test compute shader
+    const testShaderSource = matrixOrientationTestShaderSource;
+
+    // Create GPU buffer
+    const gpuBuffer = new BABYLON.StorageBuffer(
+        engine,
+        testCount * 16 * 4,
+        BABYLON.Constants.BUFFER_CREATIONFLAG_VERTEX | 
+        BABYLON.Constants.BUFFER_CREATIONFLAG_STORAGE |
+        BABYLON.Constants.BUFFER_CREATIONFLAG_READ
+    );
+    
+    // Create params buffer
+    const testParamsBuffer = new BABYLON.UniformBuffer(engine);
+    testParamsBuffer.addUniform("count", 1);
+    testParamsBuffer.addUniform("padding1", 1);
+    testParamsBuffer.addUniform("padding2", 1);
+    testParamsBuffer.addUniform("padding3", 1);
+    testParamsBuffer.addUniform("padding4", 4); // vec4<f32>
+    testParamsBuffer.updateFloat("count", testCount);
+    testParamsBuffer.updateFloat("padding1", 0);
+    testParamsBuffer.updateFloat("padding2", 0);
+    testParamsBuffer.updateFloat("padding3", 0);
+    testParamsBuffer.updateFloat4("padding4", 0, 0, 0, 0);
+    testParamsBuffer.update();
+    
+    // Create compute shader
+    const testComputeShader = new BABYLON.ComputeShader(
+        "matrixTest",
+        engine,
+        { computeSource: testShaderSource },
+        {
+            bindingsMapping: {
+                "matrices": { group: 0, binding: 0 },
+                "params": { group: 0, binding: 1 }
+            }
+        }
+    );
+    
+    testComputeShader.setStorageBuffer("matrices", gpuBuffer);
+    testComputeShader.setUniformBuffer("params", testParamsBuffer);
+    
+    // Wait for shader to be ready
+    while (!testComputeShader.isReady()) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    
+    // Dispatch compute shader
+    testComputeShader.dispatch(testCount, 1, 1);
+    
+    // Create CPU matrices
+    const cpuMatrices = new Float32Array(testCount * 16);
+    for (let i = 0; i < testCount; i++) {
+        const x = i * 2.0;
+        const y = i * 1.5;
+        const z = i * 0.5;
+        const rotationY = i * 0.5;
+        const scale = 1.0 + i * 0.2;
+        
+        const matrix = BABYLON.Matrix.Compose(
+            new BABYLON.Vector3(scale, scale, scale),
+            BABYLON.Quaternion.FromEulerAngles(0, rotationY, 0),
+            new BABYLON.Vector3(x, y, z)
+        );
+        
+        matrix.copyToArray(cpuMatrices, i * 16);
+    }
+    
+    // Read GPU matrices and compare
+    const gpuData = await gpuBuffer.read();
+    const gpuMatrices = new Float32Array(gpuData.buffer);
+    
+    let report = "=== MATRIX COMPARISON REPORT ===\n\n";
+    
+    for (let i = 0; i < testCount; i++) {
+        const offset = i * 16;
+        const x = i * 2.0;
+        const y = i * 1.5;
+        const z = i * 0.5;
+        const rotationY = i * 0.5;
+        const scale = 1.0 + i * 0.2;
+        
+        report += `MATRIX ${i} (pos=[${x},${y},${z}], rot=${rotationY.toFixed(3)}, scale=${scale.toFixed(3)}):\n`;
+        
+        // CPU matrix
+        report += `CPU: [${cpuMatrices[offset].toFixed(3)}, ${cpuMatrices[offset+1].toFixed(3)}, ${cpuMatrices[offset+2].toFixed(3)}, ${cpuMatrices[offset+3].toFixed(3)}]\n`;
+        report += `     [${cpuMatrices[offset+4].toFixed(3)}, ${cpuMatrices[offset+5].toFixed(3)}, ${cpuMatrices[offset+6].toFixed(3)}, ${cpuMatrices[offset+7].toFixed(3)}]\n`;
+        report += `     [${cpuMatrices[offset+8].toFixed(3)}, ${cpuMatrices[offset+9].toFixed(3)}, ${cpuMatrices[offset+10].toFixed(3)}, ${cpuMatrices[offset+11].toFixed(3)}]\n`;
+        report += `     [${cpuMatrices[offset+12].toFixed(3)}, ${cpuMatrices[offset+13].toFixed(3)}, ${cpuMatrices[offset+14].toFixed(3)}, ${cpuMatrices[offset+15].toFixed(3)}]\n`;
+        
+        // GPU matrix
+        report += `GPU: [${gpuMatrices[offset].toFixed(3)}, ${gpuMatrices[offset+1].toFixed(3)}, ${gpuMatrices[offset+2].toFixed(3)}, ${gpuMatrices[offset+3].toFixed(3)}]\n`;
+        report += `     [${gpuMatrices[offset+4].toFixed(3)}, ${gpuMatrices[offset+5].toFixed(3)}, ${gpuMatrices[offset+6].toFixed(3)}, ${gpuMatrices[offset+7].toFixed(3)}]\n`;
+        report += `     [${gpuMatrices[offset+8].toFixed(3)}, ${gpuMatrices[offset+9].toFixed(3)}, ${gpuMatrices[offset+10].toFixed(3)}, ${gpuMatrices[offset+11].toFixed(3)}]\n`;
+        report += `     [${gpuMatrices[offset+12].toFixed(3)}, ${gpuMatrices[offset+13].toFixed(3)}, ${gpuMatrices[offset+14].toFixed(3)}, ${gpuMatrices[offset+15].toFixed(3)}]\n`;
+        
+        // Differences for this matrix
+        const diffs = [];
+        for (let j = 0; j < 16; j++) {
+            const diff = Math.abs(cpuMatrices[offset + j] - gpuMatrices[offset + j]);
+            if (diff > 0.001) {
+                diffs.push(`[${j}]: ${diff.toFixed(3)}`);
+            }
+        }
+        if (diffs.length > 0) {
+            report += `DIFFS: ${diffs.join(", ")}\n`;
+        } else {
+            report += `DIFFS: None significant\n`;
+        }
+        report += "\n";
+    }
+    
+    let totalDiff = 0;
+    for (let i = 0; i < testCount * 16; i++) {
+        totalDiff += Math.abs(cpuMatrices[i] - gpuMatrices[i]);
+    }
+    report += `TOTAL ABSOLUTE DIFFERENCE: ${totalDiff.toFixed(6)}\n`;
+    
+    console.log(report);
+}
+
 export async function babylonInit() {
     // Create canvas element
   const app = document.querySelector<HTMLDivElement>('#app')!;
@@ -210,7 +319,11 @@ export async function babylonInit() {
   // Initialize the scene
   const canvas = document.getElementById('renderCanvas') as HTMLCanvasElement;
 
-  createWebGPUComputeScene(canvas).catch(error => {
+  createWebGPUComputeScene(canvas).then(engine => {
+      // Make test function available globally
+      (window as any).matrixOrientationTest = () => matrixOrientationTest(engine);
+      console.log("matrixOrientationTest() is now available in the console");
+  }).catch(error => {
       console.error('Failed to initialize WebGPU scene:', error);
       
       const infoElement = document.getElementById('info');
