@@ -102,23 +102,6 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
     circle.thinInstanceSetBuffer("matrix", null, 16);
     circle.thinInstanceCount = instanceCount;
 
-    // Performance monitoring
-    const perfTimes: { read: number[], setBuffer: number[], frame: number[] } = { read: [], setBuffer: [], frame: [] };
-    const maxSamples = 10;
-    let frameCounter = 0;
-    
-    function addPerfSample(array: number[], value: number) {
-        array.push(value);
-        if (array.length > maxSamples) {
-            array.shift();
-        }
-    }
-    
-    function getPerfAverage(array: number[]): number {
-        if (array.length === 0) return 0;
-        return array.reduce((sum, val) => sum + val, 0) / array.length;
-    }
-
     // Create color buffer for variation
     const colors = new Float32Array(instanceCount * 4);
     for (let i = 0; i < instanceCount; i++) {
@@ -150,42 +133,16 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
         const workgroupCount = Math.ceil(instanceCount / 64);
         computeShader.dispatch(workgroupCount, 1, 1);
 
-        //perfTest - start time
-        const startTime = performance.now();
-        
         // Read matrices directly from compute shader
         matrixBuffer.read().then((data) => {
-            //perfTest - end time 1 (read time)
-            const readTime = performance.now();
-            const readDuration = readTime - startTime;
-            addPerfSample(perfTimes.read, readDuration);
-            
             const matrices = new Float32Array(data.buffer);
             circle.thinInstanceSetBuffer("matrix", matrices, 16);
-            
-            //perfTest - end time 2 (set buffer time)
-            const setBufferTime = performance.now();
-            const setBufferDuration = setBufferTime - readTime;
-            addPerfSample(perfTimes.setBuffer, setBufferDuration);
-            
-            // Log performance every 60 frames (once we have enough samples)
-            frameCounter++;
-            if (frameCounter >= maxSamples && frameCounter % 60 === 0) {
-                const avgRead = getPerfAverage(perfTimes.read);
-                const avgSetBuffer = getPerfAverage(perfTimes.setBuffer);
-                const avgFrame = getPerfAverage(perfTimes.frame);
-                console.log(`GPU Performance (10-frame avg): Read: ${avgRead.toFixed(2)}ms, SetBuffer: ${avgSetBuffer.toFixed(2)}ms, Frame: ${avgFrame.toFixed(2)}ms`);
-            }
         });
     });
 
     // Render loop
     engine.runRenderLoop(() => {
-        const frameStart = performance.now();
         scene.render();
-        const frameEnd = performance.now();
-        const frameDuration = frameEnd - frameStart;
-        addPerfSample(perfTimes.frame, frameDuration);
     });
 
     // Handle resize
@@ -220,6 +177,109 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
     }
     
     return [r, g, b];
+}
+
+class PerformanceMonitor {
+    private readTimes: number[] = [];
+    private writeTimes: number[] = [];
+    private maxSamples = 10;
+    private isRunning = false;
+    private frameCount = 0;
+    
+    constructor(private engine: BABYLON.WebGPUEngine, private bufferSize: number = 2500 * 16 * 4) {}
+    
+    start() {
+        if (this.isRunning) {
+            console.log("Performance monitor already running");
+            return;
+        }
+        
+        this.isRunning = true;
+        this.frameCount = 0;
+        this.readTimes = [];
+        this.writeTimes = [];
+        
+        console.log(`Starting GPU read/write performance test (buffer size: ${(this.bufferSize / 1024).toFixed(1)}KB)`);
+        this.runTest();
+    }
+    
+    stop() {
+        this.isRunning = false;
+        console.log("Performance monitor stopped");
+    }
+    
+    private async runTest() {
+        // Create test buffer
+        const testBuffer = new BABYLON.StorageBuffer(
+            this.engine,
+            this.bufferSize,
+            BABYLON.Constants.BUFFER_CREATIONFLAG_VERTEX | 
+            BABYLON.Constants.BUFFER_CREATIONFLAG_STORAGE |
+            BABYLON.Constants.BUFFER_CREATIONFLAG_READ
+        );
+        
+        // Create test data
+        const testData = new Float32Array(this.bufferSize / 4);
+        for (let i = 0; i < testData.length; i++) {
+            testData[i] = Math.random();
+        }
+        
+        const testLoop = async () => {
+            if (!this.isRunning) return;
+            
+            this.frameCount++;
+            
+            // Test write performance (upload to GPU)
+            const writeStart = performance.now();
+            testBuffer.update(testData);
+            const writeEnd = performance.now();
+            const writeTime = writeEnd - writeStart;
+            
+            // Test read performance (download from GPU)
+            const readStart = performance.now();
+            await testBuffer.read();
+            const readEnd = performance.now();
+            const readTime = readEnd - readStart;
+            
+            // Update running averages
+            this.addSample(this.readTimes, readTime);
+            this.addSample(this.writeTimes, writeTime);
+            
+            // Log results every frame
+            const readAvg = this.getAverage(this.readTimes);
+            const writeAvg = this.getAverage(this.writeTimes);
+            
+            console.log(`Frame ${this.frameCount}: Read: ${readTime.toFixed(2)}ms (avg: ${readAvg.toFixed(2)}ms), Write: ${writeTime.toFixed(2)}ms (avg: ${writeAvg.toFixed(2)}ms)`);
+            
+            // Continue test
+            if (this.isRunning) {
+                setTimeout(testLoop, 16); // ~60fps
+            }
+        };
+        
+        testLoop();
+    }
+    
+    private addSample(array: number[], value: number) {
+        array.push(value);
+        if (array.length > this.maxSamples) {
+            array.shift();
+        }
+    }
+    
+    private getAverage(array: number[]): number {
+        if (array.length === 0) return 0;
+        return array.reduce((sum, val) => sum + val, 0) / array.length;
+    }
+    
+    getStats() {
+        return {
+            readAverage: this.getAverage(this.readTimes),
+            writeAverage: this.getAverage(this.writeTimes),
+            frameCount: this.frameCount,
+            sampleCount: Math.min(this.readTimes.length, this.maxSamples)
+        };
+    }
 }
 
 async function matrixOrientationTest(engine: BABYLON.WebGPUEngine) {
