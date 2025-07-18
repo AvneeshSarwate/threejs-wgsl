@@ -1,10 +1,11 @@
 import * as BABYLON from 'babylonjs';
 import computeShaderSource from './shaders/babylonOscillateCompute_zeroCopy.wgsl?raw';
+import Stats from './stats';
 // import matrixOrientationTestShaderSource from './shaders/matrixTestShader.wgsl?raw';
 // import 'babylonjs/Engines/webgpuEngine';
 // import 'babylonjs/Compute/computeShader';
 
-export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promise<BABYLON.WebGPUEngine> {
+export async function createWebGPUComputeScene(canvas: HTMLCanvasElement, stats: Stats): Promise<BABYLON.WebGPUEngine> {
     // Check for WebGPU support
     if (!navigator.gpu) {
         throw new Error("WebGPU is not supported in this browser");
@@ -39,7 +40,7 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
     light.intensity = 0.8;
 
     // Configuration
-    const instanceCount = 2500;
+    const instanceCount = 1_000_000;
     const gridSize = Math.ceil(Math.sqrt(instanceCount));
 
     // Create storage buffer for matrices - 64 bytes per instance (4 vec4 columns)
@@ -186,7 +187,10 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
 
     // Render loop
     engine.runRenderLoop(() => {
+        // stats.update();
+        stats.begin();
         scene.render();
+        stats.end();
     });
 
     // Handle resize
@@ -225,6 +229,10 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
 
 
 export async function babylonInit_noCopy() {
+    const stats = new Stats();
+    stats.showPanel(0);
+    document.body.appendChild(stats.dom);
+
     // Create canvas element
   const app = document.querySelector<HTMLDivElement>('#app')!;
   app.innerHTML = `
@@ -238,7 +246,7 @@ export async function babylonInit_noCopy() {
   // Initialize the scene
   const canvas = document.getElementById('renderCanvas') as HTMLCanvasElement;
 
-  createWebGPUComputeScene(canvas).catch(error => {
+  createWebGPUComputeScene(canvas, stats).catch(error => {
       console.error('Failed to initialize WebGPU scene:', error);
       
       const infoElement = document.getElementById('info');
