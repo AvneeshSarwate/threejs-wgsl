@@ -1,6 +1,6 @@
 import * as BABYLON from 'babylonjs';
-import computeShaderSource from './shaders/babylonOscilateCompute.wgsl?raw';
-import matrixOrientationTestShaderSource from './shaders/matrixTestShader.wgsl?raw';
+import computeShaderSource from './shaders/babylonOscillateCompute_zeroCopy.wgsl?raw';
+// import matrixOrientationTestShaderSource from './shaders/matrixTestShader.wgsl?raw';
 // import 'babylonjs/Engines/webgpuEngine';
 // import 'babylonjs/Compute/computeShader';
 
@@ -42,13 +42,13 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
     const instanceCount = 2500;
     const gridSize = Math.ceil(Math.sqrt(instanceCount));
 
-    // Create storage buffer for matrices
+    // Create storage buffer for matrices - 64 bytes per instance (4 vec4 columns)
     const matrixBuffer = new BABYLON.StorageBuffer(
         engine,
-        instanceCount * 16 * 4,
+        instanceCount * 64, // 64 bytes per instance (4 vec4 = 16 floats)
         BABYLON.Constants.BUFFER_CREATIONFLAG_VERTEX | 
-        BABYLON.Constants.BUFFER_CREATIONFLAG_STORAGE |
-        BABYLON.Constants.BUFFER_CREATIONFLAG_READ
+        BABYLON.Constants.BUFFER_CREATIONFLAG_STORAGE
+        // Remove READ flag for zero-copy - no CPU read-backs needed
     );
 
     // Create uniform buffer for compute shader parameters
@@ -98,9 +98,56 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
     material.specularPower = 64;
     circle.material = material;
 
-    // Set up thin instances
+    // Set up thin instances - declare the matrix buffer but don't populate it
     circle.thinInstanceSetBuffer("matrix", null, 16);
     circle.thinInstanceCount = instanceCount;
+    circle.forcedInstanceCount = instanceCount;
+    
+    // Enable manual control of world matrix buffer - prevents CPU interference
+    circle.manualUpdateOfWorldMatrixInstancedBuffer = true;
+    
+    // Set up four instanced vertex buffers (world0-world3) pointing to the same GPU buffer
+    const strideFloats = 16;  // 16 floats per instance (64 bytes)
+    const vsize = 4;          // 4 floats per attribute (vec4)
+    
+    const world0 = new BABYLON.VertexBuffer(
+        engine,
+        matrixBuffer.getBuffer(),  // Use the same GPU buffer
+        "world0",
+        false,        // not updatable from CPU
+        false,        // postponeInternalCreation
+        strideFloats, // stride in floats
+        true,         // instanced
+        0,            // offset in floats (first column)
+        vsize         // size (4 floats = vec4)
+    );
+    
+    const world1 = new BABYLON.VertexBuffer(
+        engine,
+        matrixBuffer.getBuffer(),
+        "world1",
+        false, false, strideFloats, true, 4, vsize  // offset 4 floats
+    );
+    
+    const world2 = new BABYLON.VertexBuffer(
+        engine,
+        matrixBuffer.getBuffer(),
+        "world2",
+        false, false, strideFloats, true, 8, vsize  // offset 8 floats
+    );
+    
+    const world3 = new BABYLON.VertexBuffer(
+        engine,
+        matrixBuffer.getBuffer(),
+        "world3",
+        false, false, strideFloats, true, 12, vsize  // offset 12 floats
+    );
+    
+    // Attach the vertex buffers to the mesh
+    circle.setVerticesBuffer(world0);
+    circle.setVerticesBuffer(world1);
+    circle.setVerticesBuffer(world2);
+    circle.setVerticesBuffer(world3);
 
     // Create color buffer for variation
     const colors = new Float32Array(instanceCount * 4);
@@ -121,7 +168,7 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
 
-    // Animation loop
+    // Animation loop - zero copy implementation
     scene.registerBeforeRender(() => {
         const time = performance.now() * 0.001;
 
@@ -129,15 +176,12 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement): Promi
         paramsBuffer.updateFloat("time", time);
         paramsBuffer.update();
 
-        // Dispatch compute shader
+        // Dispatch compute shader - matrices are written directly to GPU buffer
         const workgroupCount = Math.ceil(instanceCount / 64);
         computeShader.dispatch(workgroupCount, 1, 1);
-
-        // Read matrices directly from compute shader
-        matrixBuffer.read().then((data) => {
-            const matrices = new Float32Array(data.buffer);
-            circle.thinInstanceSetBuffer("matrix", matrices, 16);
-        });
+        
+        // No CPU read-back needed! The same GPU buffer is used by vertex stage
+        // Babylon's vertex shader will consume world0-world3 attributes directly
     });
 
     // Render loop
@@ -179,236 +223,8 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
     return [r, g, b];
 }
 
-class PerformanceMonitor {
-    private readTimes: number[] = [];
-    private writeTimes: number[] = [];
-    private maxSamples = 10;
-    private isRunning = false;
-    private frameCount = 0;
-    
-    constructor(private engine: BABYLON.WebGPUEngine, private bufferSize: number = 2500 * 16 * 4) {}
-    
-    start() {
-        if (this.isRunning) {
-            console.log("Performance monitor already running");
-            return;
-        }
-        
-        this.isRunning = true;
-        this.frameCount = 0;
-        this.readTimes = [];
-        this.writeTimes = [];
-        
-        console.log(`Starting GPU read/write performance test (buffer size: ${(this.bufferSize / 1024).toFixed(1)}KB)`);
-        this.runTest();
-    }
-    
-    stop() {
-        this.isRunning = false;
-        console.log("Performance monitor stopped");
-    }
-    
-    private async runTest() {
-        // Create test buffer
-        const testBuffer = new BABYLON.StorageBuffer(
-            this.engine,
-            this.bufferSize,
-            BABYLON.Constants.BUFFER_CREATIONFLAG_VERTEX | 
-            BABYLON.Constants.BUFFER_CREATIONFLAG_STORAGE |
-            BABYLON.Constants.BUFFER_CREATIONFLAG_READ
-        );
-        
-        // Create test data
-        const testData = new Float32Array(this.bufferSize / 4);
-        for (let i = 0; i < testData.length; i++) {
-            testData[i] = Math.random();
-        }
-        
-        const testLoop = async () => {
-            if (!this.isRunning) return;
-            
-            this.frameCount++;
-            
-            // Test write performance (upload to GPU)
-            const writeStart = performance.now();
-            testBuffer.update(testData);
-            const writeEnd = performance.now();
-            const writeTime = writeEnd - writeStart;
-            
-            // Test read performance (download from GPU)
-            const readStart = performance.now();
-            await testBuffer.read();
-            const readEnd = performance.now();
-            const readTime = readEnd - readStart;
-            
-            // Update running averages
-            this.addSample(this.readTimes, readTime);
-            this.addSample(this.writeTimes, writeTime);
-            
-            // Log results every frame
-            const readAvg = this.getAverage(this.readTimes);
-            const writeAvg = this.getAverage(this.writeTimes);
-            
-            console.log(`Frame ${this.frameCount}: Read: ${readTime.toFixed(2)}ms (avg: ${readAvg.toFixed(2)}ms), Write: ${writeTime.toFixed(2)}ms (avg: ${writeAvg.toFixed(2)}ms)`);
-            
-            // Continue test
-            if (this.isRunning) {
-                setTimeout(testLoop, 16); // ~60fps
-            }
-        };
-        
-        testLoop();
-    }
-    
-    private addSample(array: number[], value: number) {
-        array.push(value);
-        if (array.length > this.maxSamples) {
-            array.shift();
-        }
-    }
-    
-    private getAverage(array: number[]): number {
-        if (array.length === 0) return 0;
-        return array.reduce((sum, val) => sum + val, 0) / array.length;
-    }
-    
-    getStats() {
-        return {
-            readAverage: this.getAverage(this.readTimes),
-            writeAverage: this.getAverage(this.writeTimes),
-            frameCount: this.frameCount,
-            sampleCount: Math.min(this.readTimes.length, this.maxSamples)
-        };
-    }
-}
 
-async function matrixOrientationTest(engine: BABYLON.WebGPUEngine) {
-    console.log("=== Matrix Orientation Test ===");
-    
-    const testCount = 4;
-    
-    // Create test compute shader
-    const testShaderSource = matrixOrientationTestShaderSource;
-
-    // Create GPU buffer
-    const gpuBuffer = new BABYLON.StorageBuffer(
-        engine,
-        testCount * 16 * 4,
-        BABYLON.Constants.BUFFER_CREATIONFLAG_VERTEX | 
-        BABYLON.Constants.BUFFER_CREATIONFLAG_STORAGE |
-        BABYLON.Constants.BUFFER_CREATIONFLAG_READ
-    );
-    
-    // Create params buffer
-    const testParamsBuffer = new BABYLON.UniformBuffer(engine);
-    testParamsBuffer.addUniform("count", 1);
-    testParamsBuffer.addUniform("padding1", 1);
-    testParamsBuffer.addUniform("padding2", 1);
-    testParamsBuffer.addUniform("padding3", 1);
-    testParamsBuffer.addUniform("padding4", 4); // vec4<f32>
-    testParamsBuffer.updateFloat("count", testCount);
-    testParamsBuffer.updateFloat("padding1", 0);
-    testParamsBuffer.updateFloat("padding2", 0);
-    testParamsBuffer.updateFloat("padding3", 0);
-    testParamsBuffer.updateFloat4("padding4", 0, 0, 0, 0);
-    testParamsBuffer.update();
-    
-    // Create compute shader
-    const testComputeShader = new BABYLON.ComputeShader(
-        "matrixTest",
-        engine,
-        { computeSource: testShaderSource },
-        {
-            bindingsMapping: {
-                "matrices": { group: 0, binding: 0 },
-                "params": { group: 0, binding: 1 }
-            }
-        }
-    );
-    
-    testComputeShader.setStorageBuffer("matrices", gpuBuffer);
-    testComputeShader.setUniformBuffer("params", testParamsBuffer);
-    
-    // Wait for shader to be ready
-    while (!testComputeShader.isReady()) {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-    
-    // Dispatch compute shader
-    testComputeShader.dispatch(testCount, 1, 1);
-    
-    // Create CPU matrices
-    const cpuMatrices = new Float32Array(testCount * 16);
-    for (let i = 0; i < testCount; i++) {
-        const x = i * 2.0;
-        const y = i * 1.5;
-        const z = i * 0.5;
-        const rotationY = i * 0.5;
-        const scale = 1.0 + i * 0.2;
-        
-        const matrix = BABYLON.Matrix.Compose(
-            new BABYLON.Vector3(scale, scale, scale),
-            BABYLON.Quaternion.FromEulerAngles(0, rotationY, 0),
-            new BABYLON.Vector3(x, y, z)
-        );
-        
-        matrix.copyToArray(cpuMatrices, i * 16);
-    }
-    
-    // Read GPU matrices and compare
-    const gpuData = await gpuBuffer.read();
-    const gpuMatrices = new Float32Array(gpuData.buffer);
-    
-    let report = "=== MATRIX COMPARISON REPORT ===\n\n";
-    
-    for (let i = 0; i < testCount; i++) {
-        const offset = i * 16;
-        const x = i * 2.0;
-        const y = i * 1.5;
-        const z = i * 0.5;
-        const rotationY = i * 0.5;
-        const scale = 1.0 + i * 0.2;
-        
-        report += `MATRIX ${i} (pos=[${x},${y},${z}], rot=${rotationY.toFixed(3)}, scale=${scale.toFixed(3)}):\n`;
-        
-        // CPU matrix
-        report += `CPU: [${cpuMatrices[offset].toFixed(3)}, ${cpuMatrices[offset+1].toFixed(3)}, ${cpuMatrices[offset+2].toFixed(3)}, ${cpuMatrices[offset+3].toFixed(3)}]\n`;
-        report += `     [${cpuMatrices[offset+4].toFixed(3)}, ${cpuMatrices[offset+5].toFixed(3)}, ${cpuMatrices[offset+6].toFixed(3)}, ${cpuMatrices[offset+7].toFixed(3)}]\n`;
-        report += `     [${cpuMatrices[offset+8].toFixed(3)}, ${cpuMatrices[offset+9].toFixed(3)}, ${cpuMatrices[offset+10].toFixed(3)}, ${cpuMatrices[offset+11].toFixed(3)}]\n`;
-        report += `     [${cpuMatrices[offset+12].toFixed(3)}, ${cpuMatrices[offset+13].toFixed(3)}, ${cpuMatrices[offset+14].toFixed(3)}, ${cpuMatrices[offset+15].toFixed(3)}]\n`;
-        
-        // GPU matrix
-        report += `GPU: [${gpuMatrices[offset].toFixed(3)}, ${gpuMatrices[offset+1].toFixed(3)}, ${gpuMatrices[offset+2].toFixed(3)}, ${gpuMatrices[offset+3].toFixed(3)}]\n`;
-        report += `     [${gpuMatrices[offset+4].toFixed(3)}, ${gpuMatrices[offset+5].toFixed(3)}, ${gpuMatrices[offset+6].toFixed(3)}, ${gpuMatrices[offset+7].toFixed(3)}]\n`;
-        report += `     [${gpuMatrices[offset+8].toFixed(3)}, ${gpuMatrices[offset+9].toFixed(3)}, ${gpuMatrices[offset+10].toFixed(3)}, ${gpuMatrices[offset+11].toFixed(3)}]\n`;
-        report += `     [${gpuMatrices[offset+12].toFixed(3)}, ${gpuMatrices[offset+13].toFixed(3)}, ${gpuMatrices[offset+14].toFixed(3)}, ${gpuMatrices[offset+15].toFixed(3)}]\n`;
-        
-        // Differences for this matrix
-        const diffs = [];
-        for (let j = 0; j < 16; j++) {
-            const diff = Math.abs(cpuMatrices[offset + j] - gpuMatrices[offset + j]);
-            if (diff > 0.001) {
-                diffs.push(`[${j}]: ${diff.toFixed(3)}`);
-            }
-        }
-        if (diffs.length > 0) {
-            report += `DIFFS: ${diffs.join(", ")}\n`;
-        } else {
-            report += `DIFFS: None significant\n`;
-        }
-        report += "\n";
-    }
-    
-    let totalDiff = 0;
-    for (let i = 0; i < testCount * 16; i++) {
-        totalDiff += Math.abs(cpuMatrices[i] - gpuMatrices[i]);
-    }
-    report += `TOTAL ABSOLUTE DIFFERENCE: ${totalDiff.toFixed(6)}\n`;
-    
-    console.log(report);
-}
-
-export async function babylonInit() {
+export async function babylonInit_noCopy() {
     // Create canvas element
   const app = document.querySelector<HTMLDivElement>('#app')!;
   app.innerHTML = `
@@ -422,11 +238,7 @@ export async function babylonInit() {
   // Initialize the scene
   const canvas = document.getElementById('renderCanvas') as HTMLCanvasElement;
 
-  createWebGPUComputeScene(canvas).then(engine => {
-      // Make test function available globally
-      (window as any).matrixOrientationTest = () => matrixOrientationTest(engine);
-      console.log("matrixOrientationTest() is now available in the console");
-  }).catch(error => {
+  createWebGPUComputeScene(canvas).catch(error => {
       console.error('Failed to initialize WebGPU scene:', error);
       
       const infoElement = document.getElementById('info');
