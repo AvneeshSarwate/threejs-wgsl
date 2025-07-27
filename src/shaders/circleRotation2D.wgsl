@@ -46,9 +46,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let translateY = ndcY;
     let translateZ = 0.0;
     
-    // Scale (uniform scaling for circular shapes)
-    let scaleX = 0.02;
-    let scaleY = 0.02;
+    // No scaling needed - circles are created at the correct size
+    let scaleX = 1.0;
+    let scaleY = 1.0;
     let scaleZ = 1.0;
     
     // Rotation (individual circle rotation around Z-axis)
@@ -57,22 +57,23 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let sinR = sin(rotationAngle);
     
     // === BUILD TRANSFORMATION MATRIX ===
-    // Standard 2D rotation + scale + translation matrix
-    // [ scaleX*cosR  -scaleX*sinR  0  translateX ]
-    // [ scaleY*sinR   scaleY*cosR  0  translateY ]
-    // [     0             0        1  translateZ ]
-    // [     0             0        0      1      ]
+    // Standard 2D rotation + translation matrix (no scaling)
+    // Row-major format for Babylon.js world0-world3 vertex attributes:
+    // [ cosR  -sinR   0.0         0.0 ]  <- world0 (row 0)
+    // [ sinR   cosR   0.0         0.0 ]  <- world1 (row 1) 
+    // [ 0.0    0.0    1.0         0.0 ]  <- world2 (row 2)
+    // [ translateX translateY translateZ 1.0 ]  <- world3 (row 3)
     
     let base = index * 4u;
     
     // Row 0 (world0): first row of transformation matrix
-    matrices[base + 0u] = vec4<f32>(scaleX * cosR, -scaleX * sinR, 0.0, 0.0);
+    matrices[base + 0u] = vec4<f32>(cosR, -sinR, 0.0, 0.0);
     
     // Row 1 (world1): second row of transformation matrix  
-    matrices[base + 1u] = vec4<f32>(scaleY * sinR, scaleY * cosR, 0.0, 0.0);
+    matrices[base + 1u] = vec4<f32>(sinR, cosR, 0.0, 0.0);
     
     // Row 2 (world2): third row of transformation matrix
-    matrices[base + 2u] = vec4<f32>(0.0, 0.0, scaleZ, 0.0);
+    matrices[base + 2u] = vec4<f32>(0.0, 0.0, 1.0, 0.0);
     
     // Row 3 (world3): fourth row of transformation matrix (translation)
     matrices[base + 3u] = vec4<f32>(translateX, translateY, translateZ, 1.0);

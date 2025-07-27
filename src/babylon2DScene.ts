@@ -85,10 +85,16 @@ export async function create2DWebGPUScene(canvas: HTMLCanvasElement, stats: Stat
     computeShader.setUniformBuffer("params", paramsBuffer);
 
     // Create base mesh for instancing (2D circle)
+    // Calculate appropriate radius for the orthographic coordinate system
+    // Target: ~40 pixel diameter circles on 1280x720 canvas
+    const targetPixelSize = 10;
+    const orthoWidth = 2 * aspectRatio; // Total orthographic width
+    const circleRadius = (targetPixelSize / canvasWidth) * orthoWidth * 0.5;
+    
     const circle = BABYLON.MeshBuilder.CreateDisc(
         "circle",
         {
-            radius: 1, // Will be scaled by compute shader
+            radius: circleRadius,
             tessellation: 16
         },
         scene
