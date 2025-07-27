@@ -60,7 +60,7 @@ class StrokeDataGenerator {
 
 ```typescript
 class StrokeInterpolator {
-  private readonly NORMALIZED_POINT_COUNT = 1024; // Standard length for all strokes (match workgroup size)
+  private readonly NORMALIZED_POINT_COUNT = 1024; // Standard length for all strokes
   
   // Interpolate stroke to standard length using cubic spline interpolation
   normalizeStroke(stroke: Stroke): StrokePoint[]
@@ -78,7 +78,7 @@ class StrokeInterpolator {
 
 **Normalization approach:**
 - Use arc-length parameterization for even spacing
-- Resample all strokes to exactly 1024 points (matching compute workgroup thread count)
+- Resample all strokes to exactly 1024 points for consistent texture sampling
 - Maintain relative shape proportions during resampling
 
 #### 3.3 GPU Texture Storage System
@@ -88,8 +88,8 @@ class StrokeInterpolator {
 class StrokeTextureManager {
   private engine: BABYLON.WebGPUEngine;
   private strokeTexture: BABYLON.RawTexture;
-  private maxStrokes: number = 64; // Maximum number of stored strokes
-  private pointsPerStroke: number = 1024; // Match workgroup size for proper sampling
+  private maxStrokes: number = 64; // Maximum number of stored strokes  
+  private pointsPerStroke: number = 1024; // Points per stroke path
   
   constructor(engine: BABYLON.WebGPUEngine) {
     this.createStrokeTexture();
@@ -111,11 +111,11 @@ class StrokeTextureManager {
       this.engine,
       false, // no mipmaps
       false, // not a cube
-      BABYLON.Texture.NEAREST_NEAREST,
+      BABYLON.Texture.LINEAR_LINEAR,
       BABYLON.Constants.TEXTURETYPE_FLOAT,
       undefined,
       undefined,
-      BABYLON.Constants.TEXTURE_CREATIONFLAG_STORAGE
+      undefined // Remove storage flag - this texture is for sampling only
     );
   }
   
@@ -131,7 +131,7 @@ class StrokeTextureManager {
 ```
 
 **Updated Texture Layout:**
-- **Width**: 1024 pixels (one per stroke point, matching workgroup thread count)
+- **Width**: 1024 pixels (one per stroke point)
 - **Height**: 64 pixels (one per stroke)
 - **Format**: RG32Float (2 floats per pixel for x,y coordinates)
 - **Total storage**: 1024 × 64 × 2 × 4 bytes = 524KB
@@ -189,7 +189,7 @@ class DrawLifecycleManager {
   private priorityQueue: PriorityQueue<LaunchConfig>;
   private activeConfigs: Map<string, LaunchConfig>;
   private gpuConfigBuffer: BABYLON.StorageBuffer;
-  private maxSimultaneousAnimations: number = 1024;
+  private maxSimultaneousAnimations: number = 64;
   
   constructor(engine: BABYLON.WebGPUEngine) {
     this.priorityQueue = new PriorityQueue<LaunchConfig>();
@@ -198,12 +198,12 @@ class DrawLifecycleManager {
   }
   
   private createGPUBuffer(engine: BABYLON.WebGPUEngine): void {
-    // Create storage buffer for 1024 launch configs
+    // Create storage buffer for launch configs
     const bufferSize = this.maxSimultaneousAnimations * 12 * 4; // 12 floats per config
     this.gpuConfigBuffer = new BABYLON.StorageBuffer(
       engine,
       bufferSize,
-      BABYLON.Constants.BUFFER_CREATIONFLAG_VERTEX
+      BABYLON.Constants.BUFFER_CREATIONFLAG_STORAGE
     );
   }
   
@@ -246,15 +246,25 @@ class DrawLifecycleManager {
 - **Metadata**: Complete LaunchConfig object
 - **Processing**: Remove completed animations, activate queued ones
 
+**Important**: This system manages animation lifecycle on CPU side only. The GPU shader reads launch configurations but does not modify them to avoid write conflicts.
+
 ### Step 5: Stroke Animation Compute Shader
 
-#### 5.1 Compute Shader Structure
+#### 5.1 Progressive Stroke Drawing with Optimized Workgroup Size
 **File**: `src/shaders/strokeAnimation.wgsl`
+
+The system uses the sophisticated wave-based drawing approach but with optimal workgroup sizing for WebGPU performance. Instead of coupling workgroup structure to stroke organization, we use global indexing for flexibility.
+
+**Optimized Workgroup Strategy:**
+- **Workgroup size: 64 threads** (optimal for most GPUs - matches warp/wavefront sizes)
+- **Global indexing**: Decouple shader logic from workgroup layout for flexibility
+- **Linear dispatch**: Simple 1D dispatch with `global_invocation_id` for index calculation
+- **Wave-like revelation** using the `phaser` function for smooth drawing animation
 
 ```wgsl
 struct LaunchConfig {
-    strokeAIndex: f32,
-    strokeBIndex: f32,
+    strokeAIndex: u32,
+    strokeBIndex: u32,
     interpolationT: f32,
     totalDuration: f32,
     
@@ -282,106 +292,10 @@ struct GlobalParams {
 
 // Bindings
 @group(0) @binding(0) var<storage, read_write> instanceMatrices: array<vec4<f32>>;
-@group(0) @binding(1) var<storage, read_write> launchConfigs: array<LaunchConfig>;
+@group(0) @binding(1) var<storage, read> launchConfigs: array<LaunchConfig>;
 @group(0) @binding(2) var<uniform> globalParams: GlobalParams;
 @group(0) @binding(3) var strokeTexture: texture_2d<f32>;
 @group(0) @binding(4) var strokeSampler: sampler;
-
-@compute @workgroup_size(64, 1, 1)
-fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-    let animationIndex = id.x;
-    if (animationIndex >= u32(globalParams.maxAnimations)) {
-        return;
-    }
-    
-    var config = launchConfigs[animationIndex];
-    if (config.active < 0.5) {
-        // Deactivate instance by moving off-screen
-        setInactiveInstance(animationIndex);
-        return;
-    }
-    
-    // Update animation phase
-    config.phase = clamp(config.elapsedTime / config.totalDuration, 0.0, 1.0);
-    config.elapsedTime += globalParams.deltaTime;
-    
-    // Check if animation completed
-    if (config.phase >= 1.0) {
-        config.active = 0.0;
-        setInactiveInstance(animationIndex);
-        launchConfigs[animationIndex] = config;
-        return;
-    }
-    
-    // Get stroke indices directly
-    let strokeAIndex = u32(config.strokeAIndex);
-    let strokeBIndex = u32(config.strokeBIndex);
-    
-    // Sample stroke positions with interpolation
-    let strokePointA = sampleStroke(strokeAIndex, config.phase);
-    let strokePointB = sampleStroke(strokeBIndex, config.phase);
-    let interpolatedPoint = mix(strokePointA, strokePointB, config.interpolationT);
-    
-    // Transform to canvas coordinates
-    let canvasPos = transformToCanvas(interpolatedPoint, config);
-    
-    // Convert to normalized device coordinates
-    let ndc = canvasToNDC(canvasPos, globalParams.canvasWidth, globalParams.canvasHeight);
-    
-    // Build transformation matrix
-    buildTransformMatrix(animationIndex, ndc, config.scale);
-    
-    // Write back updated config
-    launchConfigs[animationIndex] = config;
-}
-
-fn sampleStroke(strokeIndex: u32, phase: f32) -> vec2<f32> {
-    let textureCoord = vec2<f32>(phase, f32(strokeIndex) / 64.0);
-    return textureSampleLevel(strokeTexture, strokeSampler, textureCoord, 0.0).rg;
-}
-
-fn transformToCanvas(strokePoint: vec2<f32>, config: LaunchConfig) -> vec2<f32> {
-    return vec2<f32>(
-        config.startPointX + strokePoint.x * config.scale,
-        config.startPointY + strokePoint.y * config.scale
-    );
-}
-
-fn canvasToNDC(canvasPos: vec2<f32>, canvasWidth: f32, canvasHeight: f32) -> vec2<f32> {
-    let aspectRatio = canvasWidth / canvasHeight;
-    let ndcX = ((canvasPos.x / canvasWidth) * 2.0 - 1.0) * aspectRatio;
-    let ndcY = -((canvasPos.y / canvasHeight) * 2.0 - 1.0);
-    return vec2<f32>(ndcX, ndcY);
-}
-
-fn buildTransformMatrix(instanceIndex: u32, position: vec2<f32>, scale: f32) {
-    let base = instanceIndex * 4u;
-    
-    // Simple 2D translation matrix (no rotation for stroke points)
-    instanceMatrices[base + 0u] = vec4<f32>(scale, 0.0, 0.0, 0.0);
-    instanceMatrices[base + 1u] = vec4<f32>(0.0, scale, 0.0, 0.0);
-    instanceMatrices[base + 2u] = vec4<f32>(0.0, 0.0, 1.0, 0.0);
-    instanceMatrices[base + 3u] = vec4<f32>(position.x, position.y, 0.0, 1.0);
-}
-
-fn setInactiveInstance(instanceIndex: u32) {
-    let base = instanceIndex * 4u;
-    // Move far off-screen for culling
-    instanceMatrices[base + 3u] = vec4<f32>(-10000.0, 0.0, 0.0, 1.0);
-}
-```
-
-#### 5.2 Progressive Stroke Drawing with Optimized Workgroup Size
-
-The system uses the sophisticated wave-based drawing approach but with optimal workgroup sizing for WebGPU performance. Instead of coupling workgroup structure to stroke organization, we use global indexing for flexibility.
-
-**Optimized Workgroup Strategy:**
-- **Workgroup size: 64 threads** (optimal for most GPUs - matches warp/wavefront sizes)
-- **Global indexing**: Decouple shader logic from workgroup layout for flexibility
-- **Linear dispatch**: Simple 1D dispatch with `global_invocation_id` for index calculation
-- **Wave-like revelation** using the `phaser` function for smooth drawing animation
-
-```wgsl
 // Optimized compute shader with flexible workgroup sizing
 const POINTS_PER_STROKE: u32 = 1024u;
 
@@ -417,8 +331,8 @@ fn main(@builtin(global_invocation_id) globalId: vec3<u32>) {
     }
     
     // Sample stroke positions with interpolation at this point along the path
-    let strokePointA = sampleStroke(u32(config.strokeAIndex), pointProgress);
-    let strokePointB = sampleStroke(u32(config.strokeBIndex), pointProgress);
+    let strokePointA = sampleStroke(config.strokeAIndex, pointProgress);
+    let strokePointB = sampleStroke(config.strokeBIndex, pointProgress);
     let interpolatedPoint = mix(strokePointA, strokePointB, config.interpolationT);
     
     // Transform to canvas coordinates
@@ -438,9 +352,42 @@ fn phaser(pct: f32, phase: f32, e: f32) -> f32 {
     return clamp((phase - 1.0 + pct * (1.0 + e)) / e, 0.0, 1.0);
 }
 
+fn sampleStroke(strokeIndex: u32, phase: f32) -> vec2<f32> {
+    // Add half-texel offset for proper center sampling
+    let textureCoord = vec2<f32>(phase, (f32(strokeIndex) + 0.5) / 64.0);
+    return textureSampleLevel(strokeTexture, strokeSampler, textureCoord, 0.0).rg;
+}
+
+fn transformToCanvas(strokePoint: vec2<f32>, config: LaunchConfig) -> vec2<f32> {
+    return vec2<f32>(
+        config.startPointX + strokePoint.x * config.scale,
+        config.startPointY + strokePoint.y * config.scale
+    );
+}
+
+fn canvasToNDC(canvasPos: vec2<f32>, canvasWidth: f32, canvasHeight: f32) -> vec2<f32> {
+    let aspectRatio = canvasWidth / canvasHeight;
+    let ndcX = ((canvasPos.x / canvasWidth) * 2.0 - 1.0) * aspectRatio;
+    let ndcY = -((canvasPos.y / canvasHeight) * 2.0 - 1.0);
+    return vec2<f32>(ndcX, ndcY);
+}
+
+fn buildTransformMatrix(instanceIndex: u32, position: vec2<f32>, scale: f32) {
+    let base = instanceIndex * 4u;
+    
+    // Simple 2D translation matrix (no rotation for stroke points)
+    instanceMatrices[base + 0u] = vec4<f32>(scale, 0.0, 0.0, 0.0);
+    instanceMatrices[base + 1u] = vec4<f32>(0.0, scale, 0.0, 0.0);
+    instanceMatrices[base + 2u] = vec4<f32>(0.0, 0.0, 1.0, 0.0);
+    instanceMatrices[base + 3u] = vec4<f32>(position.x, position.y, 0.0, 1.0);
+}
+
 fn setInactiveInstance(instanceIndex: u32) {
     let base = instanceIndex * 4u;
-    // Move far off-screen for culling
+    // Zero out transformation matrix for inactive instances
+    instanceMatrices[base + 0u] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    instanceMatrices[base + 1u] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    instanceMatrices[base + 2u] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     instanceMatrices[base + 3u] = vec4<f32>(-10000.0, 0.0, 0.0, 1.0);
 }
 ```
@@ -465,7 +412,7 @@ export class DrawingScene {
   private computeShader: BABYLON.ComputeShader;
   private instancedMesh: BABYLON.Mesh;
   private maxAnimations: number = 64;    // Maximum concurrent stroke animations
-  private pointsPerStroke: number = 1024; // Points per stroke (workgroup size)
+  private pointsPerStroke: number = 1024; // Points per stroke path
   private maxInstances: number = this.maxAnimations * this.pointsPerStroke; // 65,536 total instances
   
   async createScene(canvas: HTMLCanvasElement): Promise<void> {
