@@ -2,6 +2,7 @@ import * as BABYLON from 'babylonjs';
 import { PriorityQueue } from '../../priorityQueue';
 import type { LaunchConfig, GPULaunchConfig } from './strokeTypes';
 import { DRAWING_CONSTANTS } from './constants';
+import type { StrokeTextureManager } from './strokeTextureManager';
 
 export class DrawLifecycleManager {
   private priorityQueue: PriorityQueue<LaunchConfig>;
@@ -10,10 +11,12 @@ export class DrawLifecycleManager {
   private gpuConfigData!: Float32Array;
   private maxSimultaneousAnimations: number = DRAWING_CONSTANTS.MAX_ANIMATIONS;
   private nextId: number = 0;
+  private strokeTextureManager?: StrokeTextureManager;
   
-  constructor(engine: BABYLON.WebGPUEngine) {
+  constructor(engine: BABYLON.WebGPUEngine, strokeTextureManager?: StrokeTextureManager) {
     this.priorityQueue = new PriorityQueue<LaunchConfig>();
     this.activeConfigs = new Map();
+    this.strokeTextureManager = strokeTextureManager;
     this.createGPUBuffer(engine);
   }
   
@@ -199,15 +202,63 @@ export class DrawLifecycleManager {
       interpolationT?: number;
       duration?: number;
       scale?: number;
+      position?: 'start' | 'center' | 'end';
     } = {}
   ): string {
+    // Calculate position offset based on stroke bounds and position setting
+    const position = options.position ?? 'center';
+    const scale = options.scale ?? 1.0;
+    let offsetX = 0;
+    let offsetY = 0;
+
+    if (this.strokeTextureManager) {
+      try {
+        // Get stroke data to calculate bounds
+        const pointsA = this.strokeTextureManager.getStrokeData(strokeA);
+        const pointsB = this.strokeTextureManager.getStrokeData(strokeB);
+        const interpolationT = options.interpolationT ?? 0.0;
+
+        // Calculate interpolated points and bounds
+        const interpolatedPoints = [];
+        for (let i = 0; i < Math.min(pointsA.length, pointsB.length); i++) {
+          const x = pointsA[i].x * (1 - interpolationT) + pointsB[i].x * interpolationT;
+          const y = pointsA[i].y * (1 - interpolationT) + pointsB[i].y * interpolationT;
+          interpolatedPoints.push({ x, y });
+        }
+
+        const xs = interpolatedPoints.map(p => p.x);
+        const ys = interpolatedPoints.map(p => p.y);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+
+        if (position === 'start') {
+          // Position so the first point is at click location
+          offsetX = -interpolatedPoints[0].x * scale;
+          offsetY = -interpolatedPoints[0].y * scale;
+        } else if (position === 'center') {
+          // Position so the bounding box center is at click location
+          offsetX = -(minX + maxX) * 0.5 * scale;
+          offsetY = -(minY + maxY) * 0.5 * scale;
+        } else if (position === 'end') {
+          // Position so the last point is at click location
+          const lastPoint = interpolatedPoints[interpolatedPoints.length - 1];
+          offsetX = -lastPoint.x * scale;
+          offsetY = -lastPoint.y * scale;
+        }
+      } catch (error) {
+        console.warn('Failed to calculate stroke position offset:', error);
+      }
+    }
+
     const config = {
       strokeAIndex: strokeA,
       strokeBIndex: strokeB,
       interpolationT: options.interpolationT ?? 0.0,
       totalDuration: options.duration ?? 2.0,
-      startPoint: { x, y },
-      scale: options.scale ?? 1.0
+      startPoint: { x: x + offsetX, y: y + offsetY },
+      scale
     };
     
     return this.addAnimation(config);

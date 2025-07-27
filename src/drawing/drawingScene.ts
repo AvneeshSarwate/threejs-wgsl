@@ -45,7 +45,7 @@ export class DrawingScene {
     
     // Initialize managers
     this.strokeTextureManager = new StrokeTextureManager(this.engine);
-    this.lifecycleManager = new DrawLifecycleManager(this.engine);
+    this.lifecycleManager = new DrawLifecycleManager(this.engine, this.strokeTextureManager);
   }
   
   private setupCamera(): void {
@@ -238,12 +238,14 @@ export class DrawingScene {
       const interpolationT = parseFloat((document.getElementById('interp') as HTMLInputElement)?.value || '0.5');
       const duration = parseFloat((document.getElementById('duration') as HTMLInputElement)?.value || '2.0');
       const scale = parseFloat((document.getElementById('scale') as HTMLInputElement)?.value || '1.0');
+      const position = (document.getElementById('position') as HTMLSelectElement)?.value || 'center';
       
       try {
         const animId = this.lifecycleManager.launchFromMouseClick(x, y, strokeA, strokeB, {
           interpolationT,
           duration,
-          scale
+          scale,
+          position: position as 'start' | 'center' | 'end'
         });
         
         console.log(`Launched animation ${animId} at (${x}, ${y}) - A:${strokeA} B:${strokeB} t:${interpolationT} dur:${duration}s scale:${scale}`);
@@ -293,6 +295,7 @@ export class DrawingScene {
     const strokeA = parseInt((document.getElementById('strokeA') as HTMLInputElement)?.value || '0');
     const strokeB = parseInt((document.getElementById('strokeB') as HTMLInputElement)?.value || '1');
     const interpolationT = parseFloat((document.getElementById('interp') as HTMLInputElement)?.value || '0.5');
+    const position = (document.getElementById('position') as HTMLSelectElement)?.value || 'center';
     
     // Get stroke data
     const pointsA = this.strokeTextureManager.getStrokeData(strokeA);

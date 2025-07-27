@@ -39,6 +39,14 @@ export async function drawingMain() {
                 <label>Scale:</label>
                 <input id="scale" type="number" min="0.1" max="3" step="0.1" value="1.0">
             </div>
+            <div class="control-group">
+                <label>Position:</label>
+                <select id="position">
+                    <option value="start">Start at click</option>
+                    <option value="center" selected>Center at click</option>
+                    <option value="end">End at click</option>
+                </select>
+            </div>
             <hr>
             <div class="control-group">
                 <label>System Status:</label>

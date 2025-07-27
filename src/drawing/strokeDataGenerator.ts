@@ -1,5 +1,6 @@
 import type { Stroke, StrokePoint } from './strokeTypes';
 import { DRAWING_CONSTANTS } from './constants';
+import { createNoise2D } from 'simplex-noise';
 
 export class StrokeDataGenerator {
   
@@ -174,24 +175,24 @@ export class StrokeDataGenerator {
   generateNoiseStroke(amplitude: number, frequency: number, pointCount: number = DRAWING_CONSTANTS.POINTS_PER_STROKE): Stroke {
     const points: StrokePoint[] = [];
     
-    // Simple noise function (using sin waves for deterministic results)
-    const noise = (x: number, freq: number): number => {
-      return Math.sin(x * freq) * 0.5 + Math.sin(x * freq * 2.7) * 0.3 + Math.sin(x * freq * 5.1) * 0.2;
-    };
+    // Create simplex noise function
+    const noise2D = createNoise2D();
     
     for (let i = 0; i < pointCount; i++) {
       const t = i / (pointCount - 1);
-      const baseAngle = t * 2 * Math.PI;
       
-      // Base circular path with noise distortion
-      const radius = 100 + amplitude * noise(t, frequency);
-      const angleOffset = amplitude * 0.01 * noise(t + 1000, frequency * 0.5);
+      // Pure noise-based path generation
+      const noiseScale = frequency * 0.1;
+      const xNoise = noise2D(t * noiseScale, 0);
+      const yNoise = noise2D(t * noiseScale, 1000);
       
-      const finalAngle = baseAngle + angleOffset;
+      // Create a flowing path using noise
+      const x = t * 200 - 100 + amplitude * xNoise; // Linear progression with noise
+      const y = amplitude * yNoise; // Pure noise for Y
       
       points.push({
-        x: Math.cos(finalAngle) * radius,
-        y: Math.sin(finalAngle) * radius,
+        x,
+        y,
         t
       });
     }
