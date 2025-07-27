@@ -33,6 +33,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let screenX = params.centerX + cos(currentAngle) * params.radius;
     let screenY = params.centerY + sin(currentAngle) * params.radius;
     
+    // === PARTICLE SYSTEM ACTIVITY CHECK ===
+    // Example: instances in top right quadrant are inactive
+    var isActive = true;
+    let centerX = params.centerX; // 640 for 1280x720
+    let centerY = params.centerY; // 360 for 1280x720
+    
+    // Check if instance is in top right quadrant (screen coordinates)
+    if (screenX > centerX && screenY < centerY) {
+        isActive = false;
+    }
+    
     // Convert screen coordinates to normalized device coordinates
     // Account for canvas aspect ratio (1280/720 = 1.777...)
     let aspectRatio = params.canvasWidth / params.canvasHeight;
@@ -42,9 +53,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // === EXPLICIT TRANSFORMATION COMPONENTS ===
     
     // Translation (position)
-    let translateX = ndcX;
-    let translateY = ndcY;
-    let translateZ = 0.0;
+    var translateX = ndcX;
+    var translateY = ndcY;
+    var translateZ = 0.0;
+    
+    // If inactive, move instance far off-screen for culling
+    if (!isActive) {
+        translateX = -10000.0; // Far left, outside camera frustum
+        translateY = 0.0;      // Keep Y centered (doesn't matter much)
+        translateZ = 0.0;
+    }
     
     // No scaling needed - circles are created at the correct size
     let scaleX = 1.0;
