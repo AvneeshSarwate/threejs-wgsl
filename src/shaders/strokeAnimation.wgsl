@@ -50,10 +50,10 @@ fn main(@builtin(global_invocation_id) globalId: vec3<u32>) {
     }
     
     // Debug: Force first instance to always be visible
-    if (globalIndex == 0u) {
-        buildTransformMatrix(0u, vec2<f32>(0.0, 0.0), 0.2);
-        return;
-    }
+    // if (globalIndex == 0u) {
+    //     buildTransformMatrix(0u, vec2<f32>(0.0, 0.0), 0.2);
+    //     return;
+    // }
     
     let config = launchConfigs[strokeIndex];
     if (config.isActive < 0.5) {
@@ -73,8 +73,8 @@ fn main(@builtin(global_invocation_id) globalId: vec3<u32>) {
     }
     
     // Sample stroke positions with interpolation at this point along the path
-    let strokePointA = sampleStroke(u32(config.strokeAIndex), pointProgress);
-    let strokePointB = sampleStroke(u32(config.strokeBIndex), pointProgress);
+    let strokePointA = sampleStroke(u32(config.strokeAIndex), phaseVal);
+    let strokePointB = sampleStroke(u32(config.strokeBIndex), phaseVal);
     let interpolatedPoint = mix(strokePointA, strokePointB, config.interpolationT);
     
     // Transform to canvas coordinates
