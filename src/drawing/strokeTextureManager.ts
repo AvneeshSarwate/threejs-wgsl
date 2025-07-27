@@ -23,8 +23,10 @@ export class StrokeTextureManager {
     // Initialize texture data with zeros
     this.textureData = new Float32Array(texWidth * texHeight * 2);
     
+    const float16Array = new Float16Array(this.textureData)
+
     this.strokeTexture = new BABYLON.RawTexture(
-      this.textureData,
+      float16Array,
       texWidth,
       texHeight,
       BABYLON.Constants.TEXTUREFORMAT_RG,
@@ -68,7 +70,9 @@ export class StrokeTextureManager {
     }
     
     // Update the texture on GPU
-    this.strokeTexture.update(this.textureData);
+    const float16Array = new Float16Array(this.textureData);
+
+    this.strokeTexture.update(float16Array);
   }
   
   /**

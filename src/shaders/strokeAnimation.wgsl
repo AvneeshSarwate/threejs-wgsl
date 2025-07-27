@@ -86,7 +86,7 @@ fn main(@builtin(global_invocation_id) globalId: vec3<u32>) {
     
     // Scale point size based on reveal phase for smooth appearance
     // Make points much larger to ensure visibility
-    let pointScale = 0.1 * phaseVal;  // Large visible circles that fade in
+    let pointScale = 0.1; // * phaseVal;  // Large visible circles that fade in
     buildTransformMatrix(instanceIndex, ndc, pointScale);
 }
 

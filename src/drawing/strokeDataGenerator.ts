@@ -144,6 +144,29 @@ export class StrokeDataGenerator {
       }
     };
   }
+
+  generatePointsInPlaceStroke(pointCount: number = DRAWING_CONSTANTS.POINTS_PER_STROKE) {
+    let points: StrokePoint[] = [];
+
+    for(let i = 0; i < pointCount; i++) {
+      points.push({
+        x: Math.random(),
+        y: Math.random(),
+        t: i / (pointCount - 1)
+      });
+    }
+    
+    return {
+      id: 'points_in_place',
+      points,
+      boundingBox: {
+        minX: 0,
+        maxX: 1,
+        minY: 0,
+        maxY: 1
+      }
+    };
+  }
   
   /**
    * Generate an organic stroke using simplex noise
@@ -194,6 +217,9 @@ export class StrokeDataGenerator {
    */
   generateTestStrokes(): Stroke[] {
     return [
+
+      this.generatePointsInPlaceStroke(),
+
       // Circles
       this.generateCircle(50),
       this.generateCircle(100),
