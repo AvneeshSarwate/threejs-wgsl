@@ -1,6 +1,6 @@
 struct LaunchConfig {
-    strokeAIndex: u32,
-    strokeBIndex: u32,
+    strokeAIndex: f32,
+    strokeBIndex: f32,
     interpolationT: f32,
     totalDuration: f32,
     
@@ -49,6 +49,12 @@ fn main(@builtin(global_invocation_id) globalId: vec3<u32>) {
         return;
     }
     
+    // Debug: Force first instance to always be visible
+    if (globalIndex == 0u) {
+        buildTransformMatrix(0u, vec2<f32>(0.0, 0.0), 0.2);
+        return;
+    }
+    
     let config = launchConfigs[strokeIndex];
     if (config.isActive < 0.5) {
         setInactiveInstance(globalIndex);
@@ -56,9 +62,8 @@ fn main(@builtin(global_invocation_id) globalId: vec3<u32>) {
     }
     
     // Calculate this point's position along the stroke (0.0-1.0)
-    let pointProgress = f32(pointIndex) / f32(POINTS_PER_STROKE);
+    let pointProgress = f32(pointIndex) / f32(POINTS_PER_STROKE - 1u);
     
-    // Use phaser function to create wave-like drawing effect
     let phaseVal = clamp(phaser(config.phase, pointProgress, 1.0), 0.0, 0.9999);
     
     // If this point hasn't been "revealed" yet, hide it
@@ -68,8 +73,8 @@ fn main(@builtin(global_invocation_id) globalId: vec3<u32>) {
     }
     
     // Sample stroke positions with interpolation at this point along the path
-    let strokePointA = sampleStroke(config.strokeAIndex, pointProgress);
-    let strokePointB = sampleStroke(config.strokeBIndex, pointProgress);
+    let strokePointA = sampleStroke(u32(config.strokeAIndex), pointProgress);
+    let strokePointB = sampleStroke(u32(config.strokeBIndex), pointProgress);
     let interpolatedPoint = mix(strokePointA, strokePointB, config.interpolationT);
     
     // Transform to canvas coordinates
@@ -80,18 +85,22 @@ fn main(@builtin(global_invocation_id) globalId: vec3<u32>) {
     let instanceIndex = globalIndex;
     
     // Scale point size based on reveal phase for smooth appearance
-    let pointScale = 0.003 * phaseVal;  // Small circles that fade in
+    // Make points much larger to ensure visibility
+    let pointScale = 0.1 * phaseVal;  // Large visible circles that fade in
     buildTransformMatrix(instanceIndex, ndc, pointScale);
 }
 
-// Wave-like drawing animation function (ported from TouchDesigner)
 fn phaser(pct: f32, phase: f32, e: f32) -> f32 {
     return clamp((phase - 1.0 + pct * (1.0 + e)) / e, 0.0, 1.0);
 }
 
 fn sampleStroke(strokeIndex: u32, phase: f32) -> vec2<f32> {
-    // Add half-texel offset for proper center sampling
-    let textureCoord = vec2<f32>(phase, (f32(strokeIndex) + 0.5) / 64.0);
+    // Add half-texel offset for proper center sampling on both axes
+    let texWidth = f32(POINTS_PER_STROKE);
+    let texHeight = 64.0; // Should match STROKE_TEXTURE_HEIGHT from constants
+    let u = clamp(phase, 0.0, 1.0);
+    let v = (f32(strokeIndex) + 0.5) / texHeight;
+    let textureCoord = vec2<f32>(u, v);
     return textureSampleLevel(strokeTexture, strokeSampler, textureCoord, 0.0).rg;
 }
 

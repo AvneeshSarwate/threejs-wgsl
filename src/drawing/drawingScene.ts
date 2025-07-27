@@ -94,7 +94,7 @@ export class DrawingScene {
   private setupMaterials(): void {
     // Create base mesh for instancing (2D circle)
     const aspectRatio = DRAWING_CONSTANTS.CANVAS_WIDTH / DRAWING_CONSTANTS.CANVAS_HEIGHT;
-    const targetPixelSize = 10; // Target 10 pixel diameter circles
+    const targetPixelSize = 50; // Larger base size for visibility
     const orthoWidth = 2 * aspectRatio;
     const circleRadius = (targetPixelSize / DRAWING_CONSTANTS.CANVAS_WIDTH) * orthoWidth * 0.5;
     
@@ -109,8 +109,8 @@ export class DrawingScene {
     
     // Create material
     const material = new BABYLON.StandardMaterial("strokeMaterial", this.scene);
-    material.diffuseColor = new BABYLON.Color3(1.0, 0.6, 0.2);
-    material.emissiveColor = new BABYLON.Color3(0.2, 0.1, 0.05);
+    material.diffuseColor = new BABYLON.Color3(1.0, 1.0, 1.0); // White color
+    material.emissiveColor = new BABYLON.Color3(1.0, 1.0, 1.0); // White emissive for visibility
     material.disableLighting = true; // For 2D we don't need lighting
     this.instancedMesh.material = material;
     
@@ -232,12 +232,12 @@ export class DrawingScene {
       const x = event.clientX - rect.left;
       const y = event.clientY - rect.top;
       
-      // Launch new animation with random stroke selection
-      const strokeA = Math.floor(Math.random() * Math.min(12, DRAWING_CONSTANTS.MAX_STROKES));
-      const strokeB = Math.floor(Math.random() * Math.min(12, DRAWING_CONSTANTS.MAX_STROKES));
-      const interpolationT = Math.random();
-      const duration = 1.5 + Math.random() * 2.5; // 1.5-4 seconds
-      const scale = 0.5 + Math.random() * 1.0; // 0.5-1.5x scale
+      // Get parameters from UI controls, with fallbacks
+      const strokeA = parseInt((document.getElementById('strokeA') as HTMLInputElement)?.value || '0');
+      const strokeB = parseInt((document.getElementById('strokeB') as HTMLInputElement)?.value || '1');
+      const interpolationT = parseFloat((document.getElementById('interp') as HTMLInputElement)?.value || '0.5');
+      const duration = parseFloat((document.getElementById('duration') as HTMLInputElement)?.value || '2.0');
+      const scale = parseFloat((document.getElementById('scale') as HTMLInputElement)?.value || '1.0');
       
       try {
         const animId = this.lifecycleManager.launchFromMouseClick(x, y, strokeA, strokeB, {
@@ -246,7 +246,7 @@ export class DrawingScene {
           scale
         });
         
-        console.log(`Launched animation ${animId} at (${x}, ${y})`);
+        console.log(`Launched animation ${animId} at (${x}, ${y}) - A:${strokeA} B:${strokeB} t:${interpolationT} dur:${duration}s scale:${scale}`);
       } catch (error) {
         console.warn("Failed to launch animation:", error);
       }
@@ -285,6 +285,14 @@ export class DrawingScene {
       const workgroupSize = DRAWING_CONSTANTS.WORKGROUP_SIZE;
       const workgroups = Math.ceil(totalThreads / workgroupSize);
       this.computeShader.dispatch(workgroups, 1, 1);
+      
+      // Debug: Log active animations every few seconds
+      if (Math.floor(currentTime) % 3 === 0 && deltaTime < 0.1) {
+        const status = this.lifecycleManager.getStatus();
+        if (status.activeCount > 0) {
+          console.log(`Active animations: ${status.activeCount}, dispatching ${workgroups} workgroups (${totalThreads} threads)`);
+        }
+      }
     });
     
     this.engine.runRenderLoop(() => {

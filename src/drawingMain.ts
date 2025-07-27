@@ -17,6 +17,29 @@ export async function drawingMain() {
             Press 'C' to clear all animations
         </div>
         <div id="controls">
+            <h4>Launch Parameters</h4>
+            <div class="control-group">
+                <label>Stroke A:</label>
+                <input id="strokeA" type="number" min="0" max="11" value="0">
+            </div>
+            <div class="control-group">
+                <label>Stroke B:</label>
+                <input id="strokeB" type="number" min="0" max="11" value="1">
+            </div>
+            <div class="control-group">
+                <label>Interpolation t:</label>
+                <input id="interp" type="range" min="0" max="1" step="0.01" value="0.5">
+                <span id="interpValue">0.5</span>
+            </div>
+            <div class="control-group">
+                <label>Duration (s):</label>
+                <input id="duration" type="number" min="0.1" max="10" step="0.1" value="2.0">
+            </div>
+            <div class="control-group">
+                <label>Scale:</label>
+                <input id="scale" type="number" min="0.1" max="3" step="0.1" value="1.0">
+            </div>
+            <hr>
             <div class="control-group">
                 <label>System Status:</label>
                 <div id="status">Initializing...</div>
@@ -63,13 +86,28 @@ export async function drawingMain() {
         }
         
         .control-group {
-            margin-bottom: 8px;
+            margin-bottom: 10px;
         }
         
         .control-group label {
             display: block;
             font-weight: bold;
             margin-bottom: 4px;
+        }
+        
+        .control-group input {
+            width: 100%;
+            padding: 4px;
+            margin-bottom: 2px;
+        }
+        
+        .control-group input[type="range"] {
+            width: 80%;
+        }
+        
+        h4 {
+            margin: 0 0 10px 0;
+            color: #4CAF50;
         }
         
         .error {
@@ -107,6 +145,15 @@ export async function drawingMain() {
             
             updateStatus();
             setInterval(updateStatus, 1000);
+        }
+        
+        // Wire up UI control updates
+        const interpSlider = document.getElementById('interp') as HTMLInputElement;
+        const interpValue = document.getElementById('interpValue') as HTMLSpanElement;
+        if (interpSlider && interpValue) {
+            interpSlider.addEventListener('input', () => {
+                interpValue.textContent = parseFloat(interpSlider.value).toFixed(2);
+            });
         }
         
         console.log('Drawing scene initialized successfully');
