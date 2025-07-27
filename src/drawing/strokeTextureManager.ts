@@ -32,7 +32,7 @@ export class StrokeTextureManager {
       false, // no mipmaps
       false, // not a cube
       BABYLON.Texture.LINEAR_LINEAR,
-      BABYLON.Constants.TEXTURETYPE_FLOAT,
+      BABYLON.Constants.TEXTURETYPE_HALF_FLOAT, // Use half-float for filterable sampling
       undefined,
       undefined,
       undefined // Remove storage flag - this texture is for sampling only
@@ -160,7 +160,7 @@ export class StrokeTextureManager {
     usedBytes: number; 
     bytesPerStroke: number;
   } {
-    const bytesPerStroke = this.pointsPerStroke * 2 * 4; // 2 floats * 4 bytes per float
+    const bytesPerStroke = this.pointsPerStroke * 2 * 2; // 2 half-floats * 2 bytes per half-float
     const totalBytes = this.maxStrokes * bytesPerStroke;
     
     return {

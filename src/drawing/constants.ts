@@ -19,9 +19,12 @@ export const DRAWING_CONSTANTS = {
   LAUNCH_CONFIG_SIZE: 12 * 4, // 12 floats per config
   MATRIX_SIZE: 16 * 4, // 16 floats per matrix (4 vec4)
   
-  // Texture dimensions
+  // Texture dimensions  
   STROKE_TEXTURE_WIDTH: 1024, // Points per stroke
   STROKE_TEXTURE_HEIGHT: 64,  // Number of strokes
+  
+  // Memory calculations
+  STROKE_TEXTURE_BYTES: 1024 * 64 * 2 * 2, // width × height × 2 channels × 2 bytes per half-float = 262KB
 } as const;
 
 // Type-safe access to constants
