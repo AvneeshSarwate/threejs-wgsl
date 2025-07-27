@@ -22,8 +22,9 @@ export class StrokeTextureManager {
     
     // Initialize texture data with zeros
     this.textureData = new Float32Array(texWidth * texHeight * 2);
-    
-    const float16Array = new Float16Array(this.textureData)
+
+    // Convert Float32Array to Float16Array for proper half-float storage
+    const float16Array = new Float16Array(this.textureData);
 
     this.strokeTexture = new BABYLON.RawTexture(
       float16Array,
@@ -69,9 +70,8 @@ export class StrokeTextureManager {
       this.textureData[bufferIndex + 1] = point.y;  // G channel
     }
     
-    // Update the texture on GPU
+    // Update the texture on GPU - convert Float32 to Float16
     const float16Array = new Float16Array(this.textureData);
-
     this.strokeTexture.update(float16Array);
   }
   
@@ -109,7 +109,8 @@ export class StrokeTextureManager {
     
     // Single GPU update after all strokes are processed
     if (needsUpdate) {
-      this.strokeTexture.update(this.textureData);
+      const float16Array = new Float16Array(this.textureData);
+      this.strokeTexture.update(float16Array);
     }
   }
   
@@ -128,7 +129,8 @@ export class StrokeTextureManager {
       this.textureData[rowStartIndex + i] = 0;
     }
     
-    this.strokeTexture.update(this.textureData);
+    const float16Array = new Float16Array(this.textureData);
+    this.strokeTexture.update(float16Array);
   }
   
   /**
@@ -136,7 +138,8 @@ export class StrokeTextureManager {
    */
   clearAllStrokes(): void {
     this.textureData.fill(0);
-    this.strokeTexture.update(this.textureData);
+    const float16Array = new Float16Array(this.textureData);
+    this.strokeTexture.update(float16Array);
   }
   
   /**

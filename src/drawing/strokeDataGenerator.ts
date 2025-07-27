@@ -236,8 +236,8 @@ export class StrokeDataGenerator {
       
       // Organic curves
       this.generateNoiseStroke(30, 2.0),
-      this.generateNoiseStroke(50, 1.5),
-      this.generateNoiseStroke(40, 3.0),
+      this.generateNoiseStroke(50, 10.5),
+      this.generateNoiseStroke(40, 32.0),
       this.generateNoiseStroke(60, 0.8),
     ];
   }
