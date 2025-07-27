@@ -1,8 +1,8 @@
 import * as BABYLON from 'babylonjs';
-import computeShaderSource from './shaders/babylonOscillateCompute_zeroCopy.wgsl?raw';
+import computeShaderSource from './shaders/circleRotation2D.wgsl?raw';
 import Stats from './stats';
 
-export async function createWebGPUComputeScene(canvas: HTMLCanvasElement, stats: Stats): Promise<BABYLON.WebGPUEngine> {
+export async function create2DWebGPUScene(canvas: HTMLCanvasElement, stats: Stats): Promise<BABYLON.WebGPUEngine> {
     // Check for WebGPU support
     if (!navigator.gpu) {
         throw new Error("WebGPU is not supported in this browser");
@@ -13,32 +13,30 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement, stats:
     await engine.initAsync();
 
     const scene = new BABYLON.Scene(engine);
-    scene.clearColor = new BABYLON.Color4(0.05, 0.05, 0.1, 1);
+    scene.clearColor = new BABYLON.Color4(0.1, 0.1, 0.1, 1);
 
-    // Camera
-    const camera = new BABYLON.ArcRotateCamera(
-        "camera",
-        Math.PI / 2,
-        Math.PI / 2.5,
-        20,
-        BABYLON.Vector3.Zero(),
-        scene
-    );
-    camera.attachControl(canvas, true);
-    camera.lowerRadiusLimit = 5;
-    camera.upperRadiusLimit = 50;
-
-    // Lighting
-    const light = new BABYLON.HemisphericLight(
-        "light",
-        new BABYLON.Vector3(0, 1, 0),
-        scene
-    );
-    light.intensity = 0.8;
+    // Create orthographic camera for 2D rendering
+    const camera = new BABYLON.FreeCamera("camera", new BABYLON.Vector3(0, 0, -1), scene);
+    
+    // Set up orthographic projection to match canvas coordinates
+    const canvasWidth = 1280;
+    const canvasHeight = 720;
+    const aspectRatio = canvasWidth / canvasHeight;
+    
+    // Create orthographic matrix that maintains aspect ratio
+    camera.mode = BABYLON.Camera.ORTHOGRAPHIC_CAMERA;
+    camera.orthoLeft = -aspectRatio;
+    camera.orthoRight = aspectRatio;
+    camera.orthoTop = 1;
+    camera.orthoBottom = -1;
+    camera.minZ = 0.1;
+    camera.maxZ = 100;
 
     // Configuration
-    const instanceCount = 1_000_000;
-    const gridSize = Math.ceil(Math.sqrt(instanceCount));
+    const instanceCount = 32; // Number of circles rotating around the main circle
+    const centerX = canvasWidth / 2;  // Center of canvas
+    const centerY = canvasHeight / 2;
+    const radius = 200; // Radius of the main circle in pixels
 
     // Create storage buffer for matrices - 64 bytes per instance (4 vec4 columns)
     const matrixBuffer = new BABYLON.StorageBuffer(
@@ -46,24 +44,32 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement, stats:
         instanceCount * 64, // 64 bytes per instance (4 vec4 = 16 floats)
         BABYLON.Constants.BUFFER_CREATIONFLAG_VERTEX | 
         BABYLON.Constants.BUFFER_CREATIONFLAG_STORAGE
-        // Remove READ flag for zero-copy - no CPU read-backs needed
     );
 
     // Create uniform buffer for compute shader parameters
     const paramsBuffer = new BABYLON.UniformBuffer(engine);
     paramsBuffer.addUniform("time", 1);
     paramsBuffer.addUniform("instanceCount", 1);
-    paramsBuffer.addUniform("gridSize", 1);
+    paramsBuffer.addUniform("centerX", 1);
+    paramsBuffer.addUniform("centerY", 1);
+    paramsBuffer.addUniform("radius", 1);
+    paramsBuffer.addUniform("canvasWidth", 1);
+    paramsBuffer.addUniform("canvasHeight", 1);
+    
     paramsBuffer.updateFloat("instanceCount", instanceCount);
-    paramsBuffer.updateFloat("gridSize", gridSize);
+    paramsBuffer.updateFloat("centerX", centerX);
+    paramsBuffer.updateFloat("centerY", centerY);
+    paramsBuffer.updateFloat("radius", radius);
+    paramsBuffer.updateFloat("canvasWidth", canvasWidth);
+    paramsBuffer.updateFloat("canvasHeight", canvasHeight);
     paramsBuffer.update();
 
     // Store shader in ShaderStore for Babylon.js
-    BABYLON.ShaderStore.ShadersStoreWGSL["oscillateCompute"] = computeShaderSource;
+    BABYLON.ShaderStore.ShadersStoreWGSL["circleRotation2D"] = computeShaderSource;
 
     // Create compute shader with proper bindings mapping
     const computeShader = new BABYLON.ComputeShader(
-        "oscillate",
+        "circleRotation2D",
         engine,
         { computeSource: computeShaderSource },
         {
@@ -78,22 +84,21 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement, stats:
     computeShader.setStorageBuffer("matrices", matrixBuffer);
     computeShader.setUniformBuffer("params", paramsBuffer);
 
-    // Create base mesh for instancing
+    // Create base mesh for instancing (2D circle)
     const circle = BABYLON.MeshBuilder.CreateDisc(
         "circle",
         {
-            radius: 0.12,
-            tessellation: 32
+            radius: 1, // Will be scaled by compute shader
+            tessellation: 16
         },
         scene
     );
 
-    // Create material with emissive glow
+    // Create material
     const material = new BABYLON.StandardMaterial("mat", scene);
-    material.diffuseColor = new BABYLON.Color3(0.2, 0.5, 1.0);
-    material.specularColor = new BABYLON.Color3(0.2, 0.5, 1.0);
-    material.emissiveColor = new BABYLON.Color3(0.1, 0.2, 0.5);
-    material.specularPower = 64;
+    material.diffuseColor = new BABYLON.Color3(1.0, 0.5, 0.2);
+    material.emissiveColor = new BABYLON.Color3(0.3, 0.1, 0.05);
+    material.disableLighting = true; // For 2D we don't need lighting
     circle.material = material;
 
     // Set up thin instances - declare the matrix buffer but don't populate it
@@ -101,7 +106,7 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement, stats:
     circle.thinInstanceCount = instanceCount;
     circle.forcedInstanceCount = instanceCount;
     
-    // Enable manual control of world matrix buffer - prevents CPU interference
+    // Enable manual control of world matrix buffer
     circle.manualUpdateOfWorldMatrixInstancedBuffer = true;
     
     // Set up four instanced vertex buffers (world0-world3) pointing to the same GPU buffer
@@ -110,35 +115,30 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement, stats:
     
     const world0 = new BABYLON.VertexBuffer(
         engine,
-        matrixBuffer.getBuffer(),  // Use the same GPU buffer
+        matrixBuffer.getBuffer(),
         "world0",
-        false,        // not updatable from CPU
-        false,        // postponeInternalCreation
-        strideFloats, // stride in floats
-        true,         // instanced
-        0,            // offset in floats (first column)
-        vsize         // size (4 floats = vec4)
+        false, false, strideFloats, true, 0, vsize
     );
     
     const world1 = new BABYLON.VertexBuffer(
         engine,
         matrixBuffer.getBuffer(),
         "world1",
-        false, false, strideFloats, true, 4, vsize  // offset 4 floats
+        false, false, strideFloats, true, 4, vsize
     );
     
     const world2 = new BABYLON.VertexBuffer(
         engine,
         matrixBuffer.getBuffer(),
         "world2",
-        false, false, strideFloats, true, 8, vsize  // offset 8 floats
+        false, false, strideFloats, true, 8, vsize
     );
     
     const world3 = new BABYLON.VertexBuffer(
         engine,
         matrixBuffer.getBuffer(),
         "world3",
-        false, false, strideFloats, true, 12, vsize  // offset 12 floats
+        false, false, strideFloats, true, 12, vsize
     );
     
     // Attach the vertex buffers to the mesh
@@ -150,8 +150,8 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement, stats:
     // Create color buffer for variation
     const colors = new Float32Array(instanceCount * 4);
     for (let i = 0; i < instanceCount; i++) {
-        const hue = (i / instanceCount) * 0.3 + 0.5; // Blue to cyan range
-        const rgb = hslToRgb(hue, 0.8, 0.6);
+        const hue = (i / instanceCount) * 360;
+        const rgb = hslToRgb(hue / 360, 0.8, 0.6);
         colors[i * 4] = rgb[0];
         colors[i * 4 + 1] = rgb[1];
         colors[i * 4 + 2] = rgb[2];
@@ -159,14 +159,12 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement, stats:
     }
     circle.thinInstanceSetBuffer("color", colors, 4);
 
-
-
     // Wait for compute shader to be ready
     while (!computeShader.isReady()) {
-      await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => setTimeout(resolve, 10));
     }
 
-    // Animation loop - zero copy implementation
+    // Animation loop
     scene.registerBeforeRender(() => {
         const time = performance.now() * 0.001;
 
@@ -174,17 +172,13 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement, stats:
         paramsBuffer.updateFloat("time", time);
         paramsBuffer.update();
 
-        // Dispatch compute shader - matrices are written directly to GPU buffer
+        // Dispatch compute shader
         const workgroupCount = Math.ceil(instanceCount / 64);
         computeShader.dispatch(workgroupCount, 1, 1);
-        
-        // No CPU read-back needed! The same GPU buffer is used by vertex stage
-        // Babylon's vertex shader will consume world0-world3 attributes directly
     });
 
     // Render loop
     engine.runRenderLoop(() => {
-        // stats.update();
         stats.begin();
         scene.render();
         stats.end();
@@ -224,8 +218,7 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
     return [r, g, b];
 }
 
-
-export async function babylonInit_noCopy() {
+export async function babylon2DInit() {
     //@ts-expect-error
     const stats = new Stats();
   
@@ -233,37 +226,37 @@ export async function babylonInit_noCopy() {
     document.body.appendChild(stats.dom);
 
     // Create canvas element
-  const app = document.querySelector<HTMLDivElement>('#app')!;
-  app.innerHTML = `
-    <canvas id="renderCanvas" width="1280" height="720"></canvas>
-    <div id="info">
-      <strong>Babylon.js 8 - WebGPU Compute Shader</strong><br>
-      Oscillating Circles with Instanced Rendering
-    </div>
-  `;
+    const app = document.querySelector<HTMLDivElement>('#app')!;
+    app.innerHTML = `
+        <canvas id="renderCanvas" width="1280" height="720"></canvas>
+        <div id="info">
+            <strong>Babylon.js 2D - WebGPU Compute Shader</strong><br>
+            Circles rotating around a circle in 2D space
+        </div>
+    `;
 
-  // Initialize the scene
-  const canvas = document.getElementById('renderCanvas') as HTMLCanvasElement;
+    // Initialize the scene
+    const canvas = document.getElementById('renderCanvas') as HTMLCanvasElement;
 
-  createWebGPUComputeScene(canvas, stats).catch(error => {
-      console.error('Failed to initialize WebGPU scene:', error);
-      
-      const infoElement = document.getElementById('info');
-      if (infoElement) {
-          if (!navigator.gpu) {
-              infoElement.innerHTML = `
-                  <span class="error">WebGPU is not available!</span><br>
-                  This could be due to:<br>
-                  • Browser doesn't support WebGPU<br>
-                  • WebGPU is disabled in browser settings<br><br>
-                  Try: Chrome/Edge 113+ or Safari Technology Preview
-              `;
-          } else {
-              infoElement.innerHTML = `
-                  <span class="error">WebGPU initialization failed!</span><br>
-                  ${error.message}
-              `;
-          }
-      }
-});
+    create2DWebGPUScene(canvas, stats).catch(error => {
+        console.error('Failed to initialize WebGPU 2D scene:', error);
+        
+        const infoElement = document.getElementById('info');
+        if (infoElement) {
+            if (!navigator.gpu) {
+                infoElement.innerHTML = `
+                    <span class="error">WebGPU is not available!</span><br>
+                    This could be due to:<br>
+                    • Browser doesn't support WebGPU<br>
+                    • WebGPU is disabled in browser settings<br><br>
+                    Try: Chrome/Edge 113+ or Safari Technology Preview
+                `;
+            } else {
+                infoElement.innerHTML = `
+                    <span class="error">WebGPU initialization failed!</span><br>
+                    ${error.message}
+                `;
+            }
+        }
+    });
 }
