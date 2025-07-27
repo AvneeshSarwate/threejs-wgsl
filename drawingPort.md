@@ -21,3 +21,4 @@ This is the plan for recreating a system that takes and drawn 2d strokes and ani
   There will be a DrawLifecycleManager class that utilizes priority queue to manage the launch configs. It will have an addAnimation() class method that will add a new launch config to the priority queue, and a tick() method that updates the elapsed time for all properties as necessary, and removes completed animations from the queue.
 5. write the compute shader that reads the texture buffer and generates the drawing animation.
     an example of an old version of this compute shader is in example_drawing_compute.glsl.
+6. write the babylon scene that uses the compute shader to draw the strokes, along with a simple launcher config UI that sets the parameters for a new config. the draw start point will be where the mouse clicks on the canvas and it will be launched when the mouse is clicked
