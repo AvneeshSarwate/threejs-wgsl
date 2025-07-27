@@ -60,7 +60,7 @@ class StrokeDataGenerator {
 
 ```typescript
 class StrokeInterpolator {
-  private readonly NORMALIZED_POINT_COUNT = 256; // Standard length for all strokes
+  private readonly NORMALIZED_POINT_COUNT = 1024; // Standard length for all strokes (match workgroup size)
   
   // Interpolate stroke to standard length using cubic spline interpolation
   normalizeStroke(stroke: Stroke): StrokePoint[]
@@ -78,7 +78,7 @@ class StrokeInterpolator {
 
 **Normalization approach:**
 - Use arc-length parameterization for even spacing
-- Resample all strokes to exactly 256 points
+- Resample all strokes to exactly 1024 points (matching compute workgroup thread count)
 - Maintain relative shape proportions during resampling
 
 #### 3.3 GPU Texture Storage System
@@ -89,14 +89,14 @@ class StrokeTextureManager {
   private engine: BABYLON.WebGPUEngine;
   private strokeTexture: BABYLON.RawTexture;
   private maxStrokes: number = 64; // Maximum number of stored strokes
-  private pointsPerStroke: number = 256;
+  private pointsPerStroke: number = 1024; // Match workgroup size for proper sampling
   
   constructor(engine: BABYLON.WebGPUEngine) {
     this.createStrokeTexture();
   }
   
   private createStrokeTexture(): void {
-    // Create RG32Float texture: 256 width (points) x 64 height (strokes)
+    // Create RG32Float texture: 1024 width (points) x 64 height (strokes)
     // Each texel stores (x,y) coordinates as RG channels
     const texWidth = this.pointsPerStroke;
     const texHeight = this.maxStrokes;
@@ -130,11 +130,11 @@ class StrokeTextureManager {
 }
 ```
 
-**Texture Layout:**
-- **Width**: 256 pixels (one per stroke point)
+**Updated Texture Layout:**
+- **Width**: 1024 pixels (one per stroke point, matching workgroup thread count)
 - **Height**: 64 pixels (one per stroke)
 - **Format**: RG32Float (2 floats per pixel for x,y coordinates)
-- **Total storage**: 256 × 64 × 2 × 4 bytes = 131KB
+- **Total storage**: 1024 × 64 × 2 × 4 bytes = 524KB
 
 ### Step 4: Animation Configuration and Lifecycle Management
 
@@ -164,20 +164,20 @@ interface LaunchConfig {
 
 // Storage buffer layout for GPU (aligned to 16-byte boundaries)
 interface GPULaunchConfig {
-  strokeIndices: number;   // Pack strokeAIndex and strokeBIndex into single float
+  strokeAIndex: number;    // Index of first stroke in texture
+  strokeBIndex: number;    // Index of second stroke for interpolation
   interpolationT: number;
   totalDuration: number;
-  elapsedTime: number;
   
+  elapsedTime: number;
   startPointX: number;
   startPointY: number;
   scale: number;
-  active: number;          // 1.0 = active, 0.0 = inactive
   
+  active: number;          // 1.0 = active, 0.0 = inactive
   phase: number;
   reserved1: number;       // Padding for 16-byte alignment
   reserved2: number;
-  reserved3: number;
 }
 ```
 
@@ -253,20 +253,20 @@ class DrawLifecycleManager {
 
 ```wgsl
 struct LaunchConfig {
-    strokeIndices: f32,    // Packed strokeA (16 bits) + strokeB (16 bits)
+    strokeAIndex: f32,
+    strokeBIndex: f32,
     interpolationT: f32,
     totalDuration: f32,
-    elapsedTime: f32,
     
+    elapsedTime: f32,
     startPointX: f32,
     startPointY: f32,
     scale: f32,
-    active: f32,
     
+    active: f32,
     phase: f32,
     reserved1: f32,
     reserved2: f32,
-    reserved3: f32,
 };
 
 struct GlobalParams {
@@ -313,9 +313,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         return;
     }
     
-    // Unpack stroke indices
-    let strokeAIndex = u32(config.strokeIndices) & 0xFFFFu;
-    let strokeBIndex = (u32(config.strokeIndices) >> 16u) & 0xFFFFu;
+    // Get stroke indices directly
+    let strokeAIndex = u32(config.strokeAIndex);
+    let strokeBIndex = u32(config.strokeBIndex);
     
     // Sample stroke positions with interpolation
     let strokePointA = sampleStroke(strokeAIndex, config.phase);
@@ -371,45 +371,85 @@ fn setInactiveInstance(instanceIndex: u32) {
 }
 ```
 
-#### 5.2 Alternative Approach: Multi-Point Rendering
+#### 5.2 Progressive Stroke Drawing with Optimized Workgroup Size
 
-For complete stroke rendering (not just single points), we need a different approach:
+The system uses the sophisticated wave-based drawing approach but with optimal workgroup sizing for WebGPU performance. Instead of coupling workgroup structure to stroke organization, we use global indexing for flexibility.
 
-**Concept**: Instead of one instance per animation, use multiple instances per stroke (one per point along the path).
+**Optimized Workgroup Strategy:**
+- **Workgroup size: 64 threads** (optimal for most GPUs - matches warp/wavefront sizes)
+- **Global indexing**: Decouple shader logic from workgroup layout for flexibility
+- **Linear dispatch**: Simple 1D dispatch with `global_invocation_id` for index calculation
+- **Wave-like revelation** using the `phaser` function for smooth drawing animation
 
 ```wgsl
-// Alternative compute shader for full stroke rendering
-@compute @workgroup_size(8, 8, 1)  // 2D dispatch: (points, animations)
-fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-    let pointIndex = id.x;       // Which point along the stroke (0-255)
-    let animationIndex = id.y;   // Which animation (0-1023)
+// Optimized compute shader with flexible workgroup sizing
+const POINTS_PER_STROKE: u32 = 1024u;
+
+@compute @workgroup_size(64, 1, 1)  // Optimal workgroup size for most GPUs
+fn main(@builtin(global_invocation_id) globalId: vec3<u32>) {
+    let globalIndex = globalId.x;
     
-    if (pointIndex >= 256u || animationIndex >= u32(globalParams.maxAnimations)) {
+    // Calculate stroke and point indices from global index
+    let strokeIndex = globalIndex / POINTS_PER_STROKE;
+    let pointIndex = globalIndex % POINTS_PER_STROKE;
+    
+    // Early exit for out-of-bounds threads
+    if (strokeIndex >= u32(globalParams.maxAnimations)) {
         return;
     }
     
-    let config = launchConfigs[animationIndex];
+    let config = launchConfigs[strokeIndex];
     if (config.active < 0.5) {
-        setInactiveInstance(pointIndex, animationIndex);
+        setInactiveInstance(globalIndex);
         return;
     }
     
-    // Calculate reveal progress - only show points up to current phase
-    let pointPhase = f32(pointIndex) / 255.0;
-    if (pointPhase > config.phase) {
-        setInactiveInstance(pointIndex, animationIndex);
+    // Calculate this point's position along the stroke (0.0-1.0)
+    let pointProgress = f32(pointIndex) / f32(POINTS_PER_STROKE);
+    
+    // Use phaser function to create wave-like drawing effect
+    let phaseVal = clamp(phaser(config.phase, pointProgress, 1.0), 0.0, 0.9999);
+    
+    // If this point hasn't been "revealed" yet, hide it
+    if (phaseVal <= 0.001) {
+        setInactiveInstance(globalIndex);
         return;
     }
     
-    // Sample and render this point
-    let strokePoint = sampleStrokePoint(config, pointPhase);
-    let canvasPos = transformToCanvas(strokePoint, config);
+    // Sample stroke positions with interpolation at this point along the path
+    let strokePointA = sampleStroke(u32(config.strokeAIndex), pointProgress);
+    let strokePointB = sampleStroke(u32(config.strokeBIndex), pointProgress);
+    let interpolatedPoint = mix(strokePointA, strokePointB, config.interpolationT);
+    
+    // Transform to canvas coordinates
+    let canvasPos = transformToCanvas(interpolatedPoint, config);
     let ndc = canvasToNDC(canvasPos, globalParams.canvasWidth, globalParams.canvasHeight);
     
-    let instanceIndex = animationIndex * 256u + pointIndex;
-    buildTransformMatrix(instanceIndex, ndc, 0.005); // Small circles for stroke points
+    // Use global index directly for instance indexing
+    let instanceIndex = globalIndex;
+    
+    // Scale point size based on reveal phase for smooth appearance
+    let pointScale = 0.003 * phaseVal;  // Small circles that fade in
+    buildTransformMatrix(instanceIndex, ndc, pointScale);
+}
+
+// Wave-like drawing animation function (ported from TouchDesigner)
+fn phaser(pct: f32, phase: f32, e: f32) -> f32 {
+    return clamp((phase - 1.0 + pct * (1.0 + e)) / e, 0.0, 1.0);
+}
+
+fn setInactiveInstance(instanceIndex: u32) {
+    let base = instanceIndex * 4u;
+    // Move far off-screen for culling
+    instanceMatrices[base + 3u] = vec4<f32>(-10000.0, 0.0, 0.0, 1.0);
 }
 ```
+
+**Performance Optimizations:**
+- **64-thread workgroups**: Align with GPU warp/wavefront sizes (32 for NVIDIA, 64 for AMD)
+- **Higher occupancy**: Smaller workgroups = less register pressure = more active workgroups per CU/SM
+- **Global indexing**: Shader logic independent of workgroup size - can tune performance without code changes
+- **1D dispatch**: Simpler than 2D, often performs better according to profiling data
 
 ### Step 6: Babylon.js Scene Integration
 
@@ -424,7 +464,9 @@ export class DrawingScene {
   private lifecycleManager: DrawLifecycleManager;
   private computeShader: BABYLON.ComputeShader;
   private instancedMesh: BABYLON.Mesh;
-  private maxInstances: number = 1024;
+  private maxAnimations: number = 64;    // Maximum concurrent stroke animations
+  private pointsPerStroke: number = 1024; // Points per stroke (workgroup size)
+  private maxInstances: number = this.maxAnimations * this.pointsPerStroke; // 65,536 total instances
   
   async createScene(canvas: HTMLCanvasElement): Promise<void> {
     await this.initializeEngine(canvas);
@@ -505,9 +547,12 @@ export class DrawingScene {
       // Update global parameters
       this.updateGlobalParams(currentTime);
       
-      // Dispatch compute shader
-      const workgroupCount = Math.ceil(this.maxInstances / 64);
-      this.computeShader.dispatch(workgroupCount, 1, 1);
+      // Dispatch compute shader with optimized 1D layout
+      // Total threads needed: maxAnimations × pointsPerStroke
+      const totalThreads = this.maxAnimations * this.pointsPerStroke;
+      const workgroupSize = 64;  // Must match @workgroup_size in shader
+      const workgroups = Math.ceil(totalThreads / workgroupSize);
+      this.computeShader.dispatch(workgroups, 1, 1);
     });
     
     this.engine.runRenderLoop(() => {
