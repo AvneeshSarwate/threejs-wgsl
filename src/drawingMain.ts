@@ -44,6 +44,15 @@ export async function drawingMain() {
                 <label>System Status:</label>
                 <div id="status">Initializing...</div>
             </div>
+            <hr>
+            <div class="control-group">
+                <label>Debug:</label>
+                <button id="debugDraw">Draw Texture Data</button>
+            </div>
+        </div>
+        <div id="debugCanvas" style="position: absolute; top: 500px; right: 0; z-index: 1000;  padding: 10px;">
+            <h5 style="color: white; margin: 0 0 10px 0;">Debug: Stroke Texture Data</h5>
+            <canvas id="debugCanvasElement" width="512" height="256" style="border: 1px solid #444;"></canvas>
         </div>
     `;
 

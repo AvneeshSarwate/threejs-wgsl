@@ -212,6 +212,35 @@ export class StrokeTextureManager {
   }
   
   /**
+   * Get raw texture data for debugging
+   */
+  getTextureData(): Float32Array {
+    return this.textureData;
+  }
+
+  /**
+   * Get stroke data for a specific stroke index (for debugging)
+   */
+  getStrokeData(strokeIndex: number): { x: number; y: number }[] {
+    if (strokeIndex < 0 || strokeIndex >= this.maxStrokes) {
+      throw new Error(`Stroke index ${strokeIndex} out of range [0, ${this.maxStrokes})`);
+    }
+    
+    const points: { x: number; y: number }[] = [];
+    const rowStartIndex = strokeIndex * this.pointsPerStroke * 2;
+    
+    for (let i = 0; i < this.pointsPerStroke; i++) {
+      const bufferIndex = rowStartIndex + i * 2;
+      points.push({
+        x: this.textureData[bufferIndex],
+        y: this.textureData[bufferIndex + 1]
+      });
+    }
+    
+    return points;
+  }
+
+  /**
    * Dispose of GPU resources
    */
   dispose(): void {

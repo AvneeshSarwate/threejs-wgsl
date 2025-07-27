@@ -252,6 +252,14 @@ export class DrawingScene {
       }
     });
     
+    // Add debug button functionality
+    const debugButton = document.getElementById('debugDraw') as HTMLButtonElement;
+    if (debugButton) {
+      debugButton.addEventListener('click', () => {
+        this.drawDebugTexture();
+      });
+    }
+    
     // Add keyboard shortcuts
     document.addEventListener('keydown', (event) => {
       switch (event.key) {
@@ -262,6 +270,153 @@ export class DrawingScene {
           break;
       }
     });
+  }
+  
+  private drawDebugTexture(): void {
+    const debugCanvas = document.getElementById('debugCanvasElement') as HTMLCanvasElement;
+    if (!debugCanvas) {
+      console.warn("Debug canvas not found");
+      return;
+    }
+    
+    const ctx = debugCanvas.getContext('2d');
+    if (!ctx) {
+      console.warn("Could not get 2D context for debug canvas");
+      return;
+    }
+    
+    // Clear canvas with white background
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, debugCanvas.width, debugCanvas.height);
+    
+    // Get current UI parameters for stroke interpolation
+    const strokeA = parseInt((document.getElementById('strokeA') as HTMLInputElement)?.value || '0');
+    const strokeB = parseInt((document.getElementById('strokeB') as HTMLInputElement)?.value || '1');
+    const interpolationT = parseFloat((document.getElementById('interp') as HTMLInputElement)?.value || '0.5');
+    
+    // Get stroke data
+    const pointsA = this.strokeTextureManager.getStrokeData(strokeA);
+    const pointsB = this.strokeTextureManager.getStrokeData(strokeB);
+    
+    // Check if strokes have data
+    const hasDataA = pointsA.some((p: {x: number, y: number}) => p.x !== 0 || p.y !== 0);
+    const hasDataB = pointsB.some((p: {x: number, y: number}) => p.x !== 0 || p.y !== 0);
+    
+    if (!hasDataA && !hasDataB) {
+      ctx.fillStyle = 'red';
+      ctx.font = '14px Arial';
+      ctx.fillText('No stroke data found', 10, 30);
+      return;
+    }
+    
+    // Draw stroke A in gray
+    if (hasDataA) {
+      ctx.strokeStyle = '#888';
+      ctx.fillStyle = '#888';
+      ctx.lineWidth = 1;
+      
+      ctx.beginPath();
+      let firstPoint = true;
+      
+      for (let i = 0; i < pointsA.length; i++) {
+        const point = pointsA[i];
+        if (point.x === 0 && point.y === 0) continue;
+        
+        const canvasX = (point.x + 1) * debugCanvas.width * 0.5;
+        const canvasY = (point.y + 1) * debugCanvas.height * 0.5;
+        
+        if (firstPoint) {
+          ctx.moveTo(canvasX, canvasY);
+          firstPoint = false;
+        } else {
+          ctx.lineTo(canvasX, canvasY);
+        }
+        
+        ctx.fillRect(canvasX - 0.5, canvasY - 0.5, 1, 1);
+      }
+      
+      ctx.stroke();
+      
+      ctx.fillStyle = '#888';
+      ctx.font = '12px Arial';
+      ctx.fillText(`Stroke A (${strokeA})`, 10, 20);
+    }
+    
+    // Draw stroke B in light gray
+    if (hasDataB) {
+      ctx.strokeStyle = '#ccc';
+      ctx.fillStyle = '#ccc';
+      ctx.lineWidth = 1;
+      
+      ctx.beginPath();
+      let firstPoint = true;
+      
+      for (let i = 0; i < pointsB.length; i++) {
+        const point = pointsB[i];
+        if (point.x === 0 && point.y === 0) continue;
+        
+        const canvasX = (point.x + 1) * debugCanvas.width * 0.5;
+        const canvasY = (point.y + 1) * debugCanvas.height * 0.5;
+        
+        if (firstPoint) {
+          ctx.moveTo(canvasX, canvasY);
+          firstPoint = false;
+        } else {
+          ctx.lineTo(canvasX, canvasY);
+        }
+        
+        ctx.fillRect(canvasX - 0.5, canvasY - 0.5, 1, 1);
+      }
+      
+      ctx.stroke();
+      
+      ctx.fillStyle = '#ccc';
+      ctx.font = '12px Arial';
+      ctx.fillText(`Stroke B (${strokeB})`, 10, 40);
+    }
+    
+    // Draw interpolated stroke in black (bold)
+    ctx.strokeStyle = '#000';
+    ctx.fillStyle = '#000';
+    ctx.lineWidth = 2;
+    
+    ctx.beginPath();
+    let firstPoint = true;
+    
+    for (let i = 0; i < Math.min(pointsA.length, pointsB.length); i++) {
+      const pointA = pointsA[i];
+      const pointB = pointsB[i];
+      
+      // Skip if both points are zero
+      if ((pointA.x === 0 && pointA.y === 0) && (pointB.x === 0 && pointB.y === 0)) continue;
+      
+      // Interpolate between A and B
+      const interpX = pointA.x * (1 - interpolationT) + pointB.x * interpolationT;
+      const interpY = pointA.y * (1 - interpolationT) + pointB.y * interpolationT;
+      
+      // Map to canvas space
+      const canvasX = (interpX + 1) * debugCanvas.width * 0.5;
+      const canvasY = (interpY + 1) * debugCanvas.height * 0.5;
+      
+      if (firstPoint) {
+        ctx.moveTo(canvasX, canvasY);
+        firstPoint = false;
+      } else {
+        ctx.lineTo(canvasX, canvasY);
+      }
+      
+      // Draw larger dots for interpolated points
+      ctx.fillRect(canvasX - 1, canvasY - 1, 2, 2);
+    }
+    
+    ctx.stroke();
+    
+    // Label the interpolated stroke
+    ctx.fillStyle = 'black';
+    ctx.font = '14px Arial';
+    ctx.fillText(`Interpolated (t=${interpolationT.toFixed(2)})`, 10, 60);
+    
+    console.log("Debug texture drawn - showing all stroke data from GPU texture");
   }
   
   private startRenderLoop(stats: Stats): void {
