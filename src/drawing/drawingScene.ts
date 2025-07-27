@@ -322,8 +322,9 @@ export class DrawingScene {
         const point = pointsA[i];
         if (point.x === 0 && point.y === 0) continue;
         
-        const canvasX = (point.x + 1) * debugCanvas.width * 0.5;
-        const canvasY = (point.y + 1) * debugCanvas.height * 0.5;
+        // Map from canvas coordinates (0-1280, 0-720) to debug canvas size (512x256)
+        const canvasX = (point.x / 1280) * debugCanvas.width;
+        const canvasY = (point.y / 720) * debugCanvas.height;
         
         if (firstPoint) {
           ctx.moveTo(canvasX, canvasY);
@@ -355,8 +356,9 @@ export class DrawingScene {
         const point = pointsB[i];
         if (point.x === 0 && point.y === 0) continue;
         
-        const canvasX = (point.x + 1) * debugCanvas.width * 0.5;
-        const canvasY = (point.y + 1) * debugCanvas.height * 0.5;
+        // Map from canvas coordinates (0-1280, 0-720) to debug canvas size (512x256)
+        const canvasX = (point.x / 1280) * debugCanvas.width;
+        const canvasY = (point.y / 720) * debugCanvas.height;
         
         if (firstPoint) {
           ctx.moveTo(canvasX, canvasY);
@@ -394,9 +396,9 @@ export class DrawingScene {
       const interpX = pointA.x * (1 - interpolationT) + pointB.x * interpolationT;
       const interpY = pointA.y * (1 - interpolationT) + pointB.y * interpolationT;
       
-      // Map to canvas space
-      const canvasX = (interpX + 1) * debugCanvas.width * 0.5;
-      const canvasY = (interpY + 1) * debugCanvas.height * 0.5;
+      // Map from canvas coordinates (0-1280, 0-720) to debug canvas size (512x256)
+      const canvasX = (interpX / 1280) * debugCanvas.width + 300;
+      const canvasY = (interpY / 720) * debugCanvas.height + 150;
       
       if (firstPoint) {
         ctx.moveTo(canvasX, canvasY);
@@ -416,7 +418,30 @@ export class DrawingScene {
     ctx.font = '14px Arial';
     ctx.fillText(`Interpolated (t=${interpolationT.toFixed(2)})`, 10, 60);
     
-    console.log("Debug texture drawn - showing all stroke data from GPU texture");
+    // Debug: Print actual coordinate ranges
+    console.log("=== STROKE DATA DEBUG ===");
+    console.log(`Stroke A (${strokeA}):`, pointsA.slice(0, 5)); // First 5 points
+    console.log(`Stroke B (${strokeB}):`, pointsB.slice(0, 5)); // First 5 points
+    
+    // Check coordinate ranges
+    const rangeA = { 
+      minX: Math.min(...pointsA.map(p => p.x)), 
+      maxX: Math.max(...pointsA.map(p => p.x)),
+      minY: Math.min(...pointsA.map(p => p.y)), 
+      maxY: Math.max(...pointsA.map(p => p.y))
+    };
+    const rangeB = { 
+      minX: Math.min(...pointsB.map(p => p.x)), 
+      maxX: Math.max(...pointsB.map(p => p.x)),
+      minY: Math.min(...pointsB.map(p => p.y)), 
+      maxY: Math.max(...pointsB.map(p => p.y))
+    };
+    
+    console.log("Stroke A ranges:", rangeA);
+    console.log("Stroke B ranges:", rangeB);
+    console.log("Y variation A:", rangeA.maxY - rangeA.minY);
+    console.log("Y variation B:", rangeB.maxY - rangeB.minY);
+    console.log("========================");
   }
   
   private startRenderLoop(stats: Stats): void {
