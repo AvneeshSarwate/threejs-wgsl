@@ -213,39 +213,45 @@ export class DrawLifecycleManager {
 
     if (this.strokeTextureManager) {
       try {
-        // Get stroke data to calculate bounds
-        const pointsA = this.strokeTextureManager.getStrokeData(strokeA);
-        const pointsB = this.strokeTextureManager.getStrokeData(strokeB);
-        const interpolationT = options.interpolationT ?? 0.0;
+        // Get pre-computed bounding boxes (no calculation needed!)
+        const boundsA = this.strokeTextureManager.getStrokeBounds(strokeA);
+        const boundsB = this.strokeTextureManager.getStrokeBounds(strokeB);
+        
+        if (boundsA && boundsB) {
+          const interpolationT = options.interpolationT ?? 0.0;
 
-        // Calculate interpolated points and bounds
-        const interpolatedPoints = [];
-        for (let i = 0; i < Math.min(pointsA.length, pointsB.length); i++) {
-          const x = pointsA[i].x * (1 - interpolationT) + pointsB[i].x * interpolationT;
-          const y = pointsA[i].y * (1 - interpolationT) + pointsB[i].y * interpolationT;
-          interpolatedPoints.push({ x, y });
-        }
+          // Interpolate pre-computed bounds directly (super efficient!)
+          const interpBounds = {
+            minX: boundsA.minX * (1 - interpolationT) + boundsB.minX * interpolationT,
+            maxX: boundsA.maxX * (1 - interpolationT) + boundsB.maxX * interpolationT,
+            minY: boundsA.minY * (1 - interpolationT) + boundsB.minY * interpolationT,
+            maxY: boundsA.maxY * (1 - interpolationT) + boundsB.maxY * interpolationT
+          };
 
-        const xs = interpolatedPoints.map(p => p.x);
-        const ys = interpolatedPoints.map(p => p.y);
-        const minX = Math.min(...xs);
-        const maxX = Math.max(...xs);
-        const minY = Math.min(...ys);
-        const maxY = Math.max(...ys);
-
-        if (position === 'start') {
-          // Position so the first point is at click location
-          offsetX = -interpolatedPoints[0].x * scale;
-          offsetY = -interpolatedPoints[0].y * scale;
-        } else if (position === 'center') {
-          // Position so the bounding box center is at click location
-          offsetX = -(minX + maxX) * 0.5 * scale;
-          offsetY = -(minY + maxY) * 0.5 * scale;
-        } else if (position === 'end') {
-          // Position so the last point is at click location
-          const lastPoint = interpolatedPoints[interpolatedPoints.length - 1];
-          offsetX = -lastPoint.x * scale;
-          offsetY = -lastPoint.y * scale;
+          if (position === 'start') {
+            // Interpolate just the first point (need to get stroke data for this)
+            const pointsA = this.strokeTextureManager.getStrokeData(strokeA);
+            const pointsB = this.strokeTextureManager.getStrokeData(strokeB);
+            const startX = pointsA[0].x * (1 - interpolationT) + pointsB[0].x * interpolationT;
+            const startY = pointsA[0].y * (1 - interpolationT) + pointsB[0].y * interpolationT;
+            offsetX = -startX * scale;
+            offsetY = -startY * scale;
+          } else if (position === 'center') {
+            // Use interpolated bounding box center
+            offsetX = -(interpBounds.minX + interpBounds.maxX) * 0.5 * scale;
+            offsetY = -(interpBounds.minY + interpBounds.maxY) * 0.5 * scale;
+          } else if (position === 'end') {
+            // Interpolate just the last point (need to get stroke data for this)
+            const pointsA = this.strokeTextureManager.getStrokeData(strokeA);
+            const pointsB = this.strokeTextureManager.getStrokeData(strokeB);
+            const lastIdx = Math.min(pointsA.length, pointsB.length) - 1;
+            const endX = pointsA[lastIdx].x * (1 - interpolationT) + pointsB[lastIdx].x * interpolationT;
+            const endY = pointsA[lastIdx].y * (1 - interpolationT) + pointsB[lastIdx].y * interpolationT;
+            offsetX = -endX * scale;
+            offsetY = -endY * scale;
+          }
+        } else {
+          console.warn(`Missing stroke bounds for strokeA=${strokeA} or strokeB=${strokeB}`);
         }
       } catch (error) {
         console.warn('Failed to calculate stroke position offset:', error);

@@ -80,9 +80,15 @@ export class DrawingScene {
         throw new Error(`Failed to normalize stroke ${stroke.id}`);
       }
       
+      // Create normalized stroke object with original bounding box
+      const normalizedStroke = {
+        ...stroke,
+        points: normalizedPoints
+      };
+      
       return {
         index,
-        points: normalizedPoints
+        stroke: normalizedStroke
       };
     });
     

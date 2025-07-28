@@ -1,6 +1,16 @@
 import * as BABYLON from 'babylonjs';
-import type { StrokePoint } from './strokeTypes';
+import type { StrokePoint, Stroke } from './strokeTypes';
 import { DRAWING_CONSTANTS } from './constants';
+
+// Float16Array is available in Chrome but TypeScript doesn't know about it yet
+declare global {
+  const Float16Array: {
+    new(length: number): any;
+    new(array: ArrayLike<number>): any;
+    new(buffer: ArrayBufferLike, byteOffset?: number, length?: number): any;
+    from(array: ArrayLike<number>): any;
+  };
+}
 
 export class StrokeTextureManager {
   private engine: BABYLON.WebGPUEngine;
@@ -8,6 +18,7 @@ export class StrokeTextureManager {
   private maxStrokes: number = DRAWING_CONSTANTS.MAX_STROKES;
   private pointsPerStroke: number = DRAWING_CONSTANTS.POINTS_PER_STROKE;
   private textureData!: Float32Array;
+  private strokeMetadata: Map<number, Stroke> = new Map();
   
   constructor(engine: BABYLON.WebGPUEngine) {
     this.engine = engine;
@@ -47,9 +58,17 @@ export class StrokeTextureManager {
   }
   
   /**
-   * Upload stroke data to specific row in texture
+   * Upload full stroke object to specific row in texture
    */
-  uploadStroke(strokeIndex: number, points: StrokePoint[]): void {
+  uploadStroke(strokeIndex: number, stroke: Stroke): void {
+    this.strokeMetadata.set(strokeIndex, stroke);
+    this.uploadStrokePoints(strokeIndex, stroke.points);
+  }
+
+  /**
+   * Upload stroke points to specific row in texture (internal method)
+   */
+  private uploadStrokePoints(strokeIndex: number, points: StrokePoint[]): void {
     if (strokeIndex < 0 || strokeIndex >= this.maxStrokes) {
       throw new Error(`Stroke index ${strokeIndex} out of range [0, ${this.maxStrokes})`);
     }
@@ -78,26 +97,29 @@ export class StrokeTextureManager {
   /**
    * Batch upload multiple strokes for efficiency
    */
-  uploadStrokes(strokes: { index: number; points: StrokePoint[] }[]): void {
+  uploadStrokes(strokes: { index: number; stroke: Stroke }[]): void {
     let needsUpdate = false;
     
-    for (const stroke of strokes) {
-      if (stroke.index < 0 || stroke.index >= this.maxStrokes) {
-        console.warn(`Skipping stroke index ${stroke.index} - out of range [0, ${this.maxStrokes})`);
+    for (const strokeEntry of strokes) {
+      if (strokeEntry.index < 0 || strokeEntry.index >= this.maxStrokes) {
+        console.warn(`Skipping stroke index ${strokeEntry.index} - out of range [0, ${this.maxStrokes})`);
         continue;
       }
       
-      if (stroke.points.length !== this.pointsPerStroke) {
-        console.warn(`Skipping stroke ${stroke.index} - incorrect point count ${stroke.points.length}, expected ${this.pointsPerStroke}`);
+      if (strokeEntry.stroke.points.length !== this.pointsPerStroke) {
+        console.warn(`Skipping stroke ${strokeEntry.index} - incorrect point count ${strokeEntry.stroke.points.length}, expected ${this.pointsPerStroke}`);
         continue;
       }
+      
+      // Store metadata for this stroke
+      this.strokeMetadata.set(strokeEntry.index, strokeEntry.stroke);
       
       // Calculate the starting index for this stroke row
-      const rowStartIndex = stroke.index * this.pointsPerStroke * 2;
+      const rowStartIndex = strokeEntry.index * this.pointsPerStroke * 2;
       
       // Copy stroke data into texture buffer
-      for (let i = 0; i < stroke.points.length; i++) {
-        const point = stroke.points[i];
+      for (let i = 0; i < strokeEntry.stroke.points.length; i++) {
+        const point = strokeEntry.stroke.points[i];
         const bufferIndex = rowStartIndex + i * 2;
         
         this.textureData[bufferIndex] = point.x;      // R channel
@@ -219,6 +241,14 @@ export class StrokeTextureManager {
    */
   getTextureData(): Float32Array {
     return this.textureData;
+  }
+
+  /**
+   * Get stroke bounding box for a specific stroke index
+   */
+  getStrokeBounds(strokeIndex: number): { minX: number; maxX: number; minY: number; maxY: number } | null {
+    const stroke = this.strokeMetadata.get(strokeIndex);
+    return stroke ? stroke.boundingBox : null;
   }
 
   /**
