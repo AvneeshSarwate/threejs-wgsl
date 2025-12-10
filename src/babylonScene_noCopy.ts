@@ -90,9 +90,9 @@ export async function createWebGPUComputeScene(canvas: HTMLCanvasElement, stats:
 
     // Create material with emissive glow
     const material = new BABYLON.StandardMaterial("mat", scene);
-    material.diffuseColor = new BABYLON.Color3(0.2, 0.5, 1.0);
-    material.specularColor = new BABYLON.Color3(0.2, 0.5, 1.0);
-    material.emissiveColor = new BABYLON.Color3(0.1, 0.2, 0.5);
+    material.diffuseColor = new BABYLON.Color3(1, 0.5, 0.2);
+    material.specularColor = new BABYLON.Color3(1, 0.5, 0.1);
+    material.emissiveColor = new BABYLON.Color3(0.5, 0.2, 0.1);
     material.specularPower = 64;
     circle.material = material;
 
@@ -230,7 +230,7 @@ export async function babylonInit_noCopy() {
     const stats = new Stats();
   
     stats.showPanel(0);
-    document.body.appendChild(stats.dom);
+    // document.body.appendChild(stats.dom);
 
     // Create canvas element
   const app = document.querySelector<HTMLDivElement>('#app')!;
