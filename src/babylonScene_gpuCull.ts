@@ -24,6 +24,9 @@ export async function createGpuCullScene(canvas: HTMLCanvasElement, stats: Stats
     });
     await engine.initAsync();
     const gpuTimingSupported = engine.enabledExtensions.includes('timestamp-query');
+    // Pass timestamps work on browsers where Babylon's whole-frame encoder
+    // timestamps produce no samples.
+    if (gpuTimingSupported) engine.enableGPUTimingMeasurements = true;
     // Babylon only uses its indirect draw buffer in this mode.
     engine.compatibilityMode = false;
     const scene = new BABYLON.Scene(engine);
@@ -181,10 +184,24 @@ export async function createGpuCullScene(canvas: HTMLCanvasElement, stats: Stats
         frames++;
         stats.end();
         if (frames % 60 === 0 && info) {
-            const gpuMs = gpu.gpuFrameTimeCounter.lastSecAverage / 1_000_000;
+            const sampleNs = (counter?: BABYLON.PerfCounter): number | null => {
+                if (!counter || counter.count === 0) return null;
+                const value = counter.lastSecAverage > 0 ? counter.lastSecAverage : counter.current;
+                return Number.isFinite(value) && value > 0 ? value : null;
+            };
+            const frameNs = sampleNs(gpu.gpuFrameTimeCounter);
+            const passTimes = [reset.gpuTimeInFrame?.counter,
+                cull.gpuTimeInFrame?.counter, engine.gpuTimeInFrameForMainPass?.counter]
+                .map(sampleNs);
+            const passNs = passTimes.every(value => value !== null)
+                ? passTimes.reduce<number>((sum, value) => sum + value!, 0) : null;
+            const timing = !gpuTimingSupported ? 'unsupported' : frameNs !== null
+                ? `frame ${(frameNs / 1_000_000).toFixed(2)} ms`
+                : passNs !== null ? `passes ${(passNs / 1_000_000).toFixed(2)} ms`
+                : frames < 180 ? 'starting' : 'no samples from browser';
             info.textContent = `GPU cull (${sizeCull ? 'frustum + size' : 'frustum'}) | radius ${camera.radius.toFixed(1)} | ` +
                 `FPS ${engine.getFps().toFixed(1)} | CPU ${ (frameTimeTotal / 60).toFixed(2) } ms | ` +
-                `GPU timing ${Number.isFinite(gpuMs) && gpuMs > 0 ? gpuMs.toFixed(2) + ' ms' : gpuTimingSupported ? 'pending' : 'unsupported'} | ` +
+                `GPU timing ${timing} | ` +
                 `visible ${visibleCount}`;
             frameTimeTotal = 0;
         }
