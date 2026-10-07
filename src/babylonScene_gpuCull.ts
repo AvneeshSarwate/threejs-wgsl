@@ -8,14 +8,13 @@ const INSTANCE_COUNT = 1_000_000;
 const GRID_SIZE = Math.ceil(Math.sqrt(INSTANCE_COUNT));
 const DISC_RADIUS = 0.12;
 
-/** GPU-only compaction and indirect drawing. Query parameters: radius, minPixelRadius, cull=frustum|size, sampleCount=1. */
+/** GPU-only compaction and indirect drawing. Query parameters: radius, minPixelRadius, cull=frustum|size. */
 export async function createGpuCullScene(canvas: HTMLCanvasElement, stats: Stats): Promise<BABYLON.WebGPUEngine> {
     if (!navigator.gpu) throw new Error('WebGPU is not supported in this browser');
     const query = new URLSearchParams(location.search);
     const radius = Number(query.get('radius') ?? 20);
     const minPixelRadius = Number(query.get('minPixelRadius') ?? 0.5);
     const sizeCull = query.get('cull') !== 'frustum';
-    const sampleCount = query.get('sampleCount') === '1';
 
     // Babylon filters unsupported requested features before creating the device.
     // Timestamp queries are optional, but its GPU frame timer needs one enabled.
@@ -47,7 +46,7 @@ export async function createGpuCullScene(canvas: HTMLCanvasElement, stats: Stats
         BABYLON.Constants.BUFFER_CREATIONFLAG_STORAGE |
         BABYLON.Constants.BUFFER_CREATIONFLAG_INDIRECT |
         BABYLON.Constants.BUFFER_CREATIONFLAG_WRITE |
-        (sampleCount ? BABYLON.Constants.BUFFER_CREATIONFLAG_READ : 0));
+        BABYLON.Constants.BUFFER_CREATIONFLAG_READ);
 
     const circle = BABYLON.MeshBuilder.CreateDisc('circle', { radius: DISC_RADIUS, tessellation: 32 }, scene);
     circle.alwaysSelectAsActiveMesh = true;
@@ -129,33 +128,41 @@ export async function createGpuCullScene(canvas: HTMLCanvasElement, stats: Stats
     }
 
     const planes = Array.from({ length: 6 }, () => new BABYLON.Plane(0, 0, 0, 0));
-    const info = document.getElementById('info');
+    const metrics = document.getElementById('metrics');
+    const postCullCount = document.getElementById('postCullCount');
     let frames = 0;
     let frameTimeTotal = 0;
-    let visibleCount = 'enable sampleCount=1';
     let reading = false;
     const gpu = new BABYLON.EngineInstrumentation(engine);
     gpu.captureGPUFrameTime = true;
 
-    if (sampleCount) {
-        engine.onEndFrameObservable.add(() => {
-            if (frames % 60 !== 0 || reading) return;
-            reading = true;
-            // Submit a separate copy after Babylon has submitted the draw. This
-            // avoids recording a copy while its render pass is still open.
-            const device = engine._device;
-            const staging = device.createBuffer({ size: 4,
-                usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-            const encoder = device.createCommandEncoder();
-            encoder.copyBufferToBuffer(rawArgs, 4, staging, 0, 4);
-            device.queue.submit([encoder.finish()]);
-            void staging.mapAsync(GPUMapMode.READ).then(() => {
-                visibleCount = new DataView(staging.getMappedRange()).getUint32(0, true).toLocaleString();
-                staging.unmap();
-            }).catch(error => console.error('Visible-count sample failed:', error))
-                .finally(() => { staging.destroy(); reading = false; });
-        });
-    }
+    const device = engine._device;
+    const staging = device.createBuffer({ size: 4,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    let samplingEnabled = true;
+    const countObserver = engine.onEndFrameObservable.add(() => {
+        if (reading || !samplingEnabled) return;
+        reading = true;
+        // Babylon has submitted this frame's draw. Copy only the 4-byte count
+        // into a reusable staging buffer, then map it asynchronously. Never
+        // wait for the GPU in the render callback.
+        const encoder = device.createCommandEncoder();
+        encoder.copyBufferToBuffer(rawArgs, 4, staging, 0, 4);
+        device.queue.submit([encoder.finish()]);
+        void staging.mapAsync(GPUMapMode.READ).then(() => {
+            const count = new DataView(staging.getMappedRange()).getUint32(0, true);
+            staging.unmap();
+            if (postCullCount) postCullCount.textContent = count.toLocaleString();
+        }).catch(error => {
+            samplingEnabled = false;
+            if (postCullCount) postCullCount.textContent = 'unavailable';
+            console.error('Post-cull count sample failed:', error);
+        }).finally(() => { reading = false; });
+    });
+    scene.onDisposeObservable.add(() => {
+        engine.onEndFrameObservable.remove(countObserver);
+        staging.destroy();
+    });
 
     scene.registerBeforeRender(() => {
         params.updateFloat('time', performance.now() * 0.001);
@@ -183,7 +190,7 @@ export async function createGpuCullScene(canvas: HTMLCanvasElement, stats: Stats
         frameTimeTotal += performance.now() - start;
         frames++;
         stats.end();
-        if (frames % 60 === 0 && info) {
+        if (frames % 60 === 0 && metrics) {
             const sampleNs = (counter?: BABYLON.PerfCounter): number | null => {
                 if (!counter || counter.count === 0) return null;
                 const value = counter.lastSecAverage > 0 ? counter.lastSecAverage : counter.current;
@@ -199,10 +206,9 @@ export async function createGpuCullScene(canvas: HTMLCanvasElement, stats: Stats
                 ? `frame ${(frameNs / 1_000_000).toFixed(2)} ms`
                 : passNs !== null ? `passes ${(passNs / 1_000_000).toFixed(2)} ms`
                 : frames < 180 ? 'starting' : 'no samples from browser';
-            info.textContent = `GPU cull (${sizeCull ? 'frustum + size' : 'frustum'}) | radius ${camera.radius.toFixed(1)} | ` +
+            metrics.textContent = `GPU cull (${sizeCull ? 'frustum + size' : 'frustum'}) | radius ${camera.radius.toFixed(1)} | ` +
                 `FPS ${engine.getFps().toFixed(1)} | CPU ${ (frameTimeTotal / 60).toFixed(2) } ms | ` +
-                `GPU timing ${timing} | ` +
-                `visible ${visibleCount}`;
+                `GPU timing ${timing}`;
             frameTimeTotal = 0;
         }
     });
@@ -215,7 +221,9 @@ export async function babylonInit_gpuCull(): Promise<void> {
     const stats = new Stats();
     stats.showPanel(0);
     const app = document.querySelector<HTMLDivElement>('#app')!;
-    app.innerHTML = '<canvas id="renderCanvas" width="1280" height="720"></canvas><div id="info">Initializing GPU culling…</div>';
+    app.innerHTML = '<canvas id="renderCanvas" width="1280" height="720"></canvas>' +
+        '<div id="info"><div id="metrics">Initializing GPU culling…</div>' +
+        `<div>Pre-cull: ${INSTANCE_COUNT.toLocaleString()} | Post-cull: <span id="postCullCount">sampling…</span></div></div>`;
     try {
         await createGpuCullScene(document.getElementById('renderCanvas') as HTMLCanvasElement, stats);
     } catch (error) {
