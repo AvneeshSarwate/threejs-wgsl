@@ -17,8 +17,13 @@ export async function createGpuCullScene(canvas: HTMLCanvasElement, stats: Stats
     const sizeCull = query.get('cull') !== 'frustum';
     const sampleCount = query.get('sampleCount') === '1';
 
-    const engine = new BABYLON.WebGPUEngine(canvas);
+    // Babylon filters unsupported requested features before creating the device.
+    // Timestamp queries are optional, but its GPU frame timer needs one enabled.
+    const engine = new BABYLON.WebGPUEngine(canvas, {
+        deviceDescriptor: { requiredFeatures: ['timestamp-query'] },
+    });
     await engine.initAsync();
+    const gpuTimingSupported = engine.enabledExtensions.includes('timestamp-query');
     // Babylon only uses its indirect draw buffer in this mode.
     engine.compatibilityMode = false;
     const scene = new BABYLON.Scene(engine);
@@ -179,7 +184,7 @@ export async function createGpuCullScene(canvas: HTMLCanvasElement, stats: Stats
             const gpuMs = gpu.gpuFrameTimeCounter.lastSecAverage / 1_000_000;
             info.textContent = `GPU cull (${sizeCull ? 'frustum + size' : 'frustum'}) | radius ${camera.radius.toFixed(1)} | ` +
                 `FPS ${engine.getFps().toFixed(1)} | CPU ${ (frameTimeTotal / 60).toFixed(2) } ms | ` +
-                `GPU ${Number.isFinite(gpuMs) && gpuMs > 0 ? gpuMs.toFixed(2) + ' ms' : 'unavailable'} | ` +
+                `GPU timing ${Number.isFinite(gpuMs) && gpuMs > 0 ? gpuMs.toFixed(2) + ' ms' : gpuTimingSupported ? 'pending' : 'unsupported'} | ` +
                 `visible ${visibleCount}`;
             frameTimeTotal = 0;
         }
