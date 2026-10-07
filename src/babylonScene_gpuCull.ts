@@ -128,7 +128,8 @@ export async function createGpuCullScene(canvas: HTMLCanvasElement, stats: Stats
     }
 
     const planes = Array.from({ length: 6 }, () => new BABYLON.Plane(0, 0, 0, 0));
-    const metrics = document.getElementById('metrics');
+    const summaryMetrics = document.getElementById('summaryMetrics');
+    const gpuMetrics = document.getElementById('gpuMetrics');
     const postCullCount = document.getElementById('postCullCount');
     let frames = 0;
     let frameTimeTotal = 0;
@@ -190,25 +191,24 @@ export async function createGpuCullScene(canvas: HTMLCanvasElement, stats: Stats
         frameTimeTotal += performance.now() - start;
         frames++;
         stats.end();
-        if (frames % 60 === 0 && metrics) {
+        if (frames % 60 === 0 && summaryMetrics && gpuMetrics) {
             const sampleNs = (counter?: BABYLON.PerfCounter): number | null => {
                 if (!counter || counter.count === 0) return null;
                 const value = counter.lastSecAverage > 0 ? counter.lastSecAverage : counter.current;
                 return Number.isFinite(value) && value > 0 ? value : null;
             };
             const frameNs = sampleNs(gpu.gpuFrameTimeCounter);
-            const passTimes = [reset.gpuTimeInFrame?.counter,
-                cull.gpuTimeInFrame?.counter, engine.gpuTimeInFrameForMainPass?.counter]
-                .map(sampleNs);
-            const passNs = passTimes.every(value => value !== null)
-                ? passTimes.reduce<number>((sum, value) => sum + value!, 0) : null;
-            const timing = !gpuTimingSupported ? 'unsupported' : frameNs !== null
-                ? `frame ${(frameNs / 1_000_000).toFixed(2)} ms`
-                : passNs !== null ? `passes ${(passNs / 1_000_000).toFixed(2)} ms`
-                : frames < 180 ? 'starting' : 'no samples from browser';
-            metrics.textContent = `GPU cull (${sizeCull ? 'frustum + size' : 'frustum'}) | radius ${camera.radius.toFixed(1)} | ` +
-                `FPS ${engine.getFps().toFixed(1)} | CPU ${ (frameTimeTotal / 60).toFixed(2) } ms | ` +
-                `GPU timing ${timing}`;
+            const cullNs = sampleNs(cull.gpuTimeInFrame?.counter);
+            const renderNs = sampleNs(engine.gpuTimeInFrameForMainPass?.counter);
+            const formatTime = (value: number | null) => !gpuTimingSupported ? 'unsupported'
+                : value !== null ? `${(value / 1_000_000).toFixed(2)} ms`
+                : frames < 180 ? 'starting' : 'no samples';
+            summaryMetrics.textContent = `GPU cull (${sizeCull ? 'frustum + size' : 'frustum'}) | ` +
+                `radius ${camera.radius.toFixed(1)} | FPS ${engine.getFps().toFixed(1)} | ` +
+                `CPU ${(frameTimeTotal / 60).toFixed(2)} ms`;
+            gpuMetrics.textContent = `GPU cull kernel ${formatTime(cullNs)} | ` +
+                `GPU render ${formatTime(renderNs)}` +
+                (frameNs !== null ? ` | GPU frame ${formatTime(frameNs)}` : '');
             frameTimeTotal = 0;
         }
     });
@@ -222,7 +222,8 @@ export async function babylonInit_gpuCull(): Promise<void> {
     stats.showPanel(0);
     const app = document.querySelector<HTMLDivElement>('#app')!;
     app.innerHTML = '<canvas id="renderCanvas" width="1280" height="720"></canvas>' +
-        '<div id="info"><div id="metrics">Initializing GPU culling…</div>' +
+        '<div id="info"><div id="summaryMetrics">Initializing GPU culling…</div>' +
+        '<div id="gpuMetrics">GPU pass timings starting…</div>' +
         `<div>Pre-cull: ${INSTANCE_COUNT.toLocaleString()} | Post-cull: <span id="postCullCount">sampling…</span></div></div>`;
     try {
         await createGpuCullScene(document.getElementById('renderCanvas') as HTMLCanvasElement, stats);
